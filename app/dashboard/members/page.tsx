@@ -173,7 +173,7 @@ export default function MembersPage() {
               disabled={sending || !inviteEmail}
               className="w-full bg-[#6366F1] hover:bg-[#4F46E5] text-white font-bold py-3 rounded-xl transition-all disabled:opacity-50"
             >
-              {sending ? 'Generating...' : 'Generate Invite Link'}
+              {sending ? 'Sending...' : 'Send Email Invite'}
             </button>
           </div>
 
