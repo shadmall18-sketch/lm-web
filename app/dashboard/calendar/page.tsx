@@ -35,9 +35,9 @@ export default function CalendarPage() {
       .map((w: any) => ({
         id: `workout-${w.id}`,
         title: `💪 ${w.custom_name}`,
-        start_time: `${w.scheduled_date}T07:00:00`,
-        color: '#F59E0B',
-        location: `${w.calories} cal`,
+        start_time: `${w.scheduled_date}T${w.scheduled_time ?? '07:00:00'}`,
+        color: w.is_time_block ? '#A5B4FC' : '#F59E0B',
+        location: w.calories != null ? `${w.calories} cal` : 'Tap to fill in',
         isWorkout: true,
       }))
 

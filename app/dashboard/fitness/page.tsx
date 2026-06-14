@@ -3,6 +3,11 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
 const TODAY = new Date().toISOString().split('T')[0]
+const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+
+function uuid() {
+  return crypto.randomUUID()
+}
 
 export default function FitnessPage() {
   const supabase = createClient()
@@ -13,12 +18,26 @@ export default function FitnessPage() {
   const [planned, setPlanned] = useState<any[]>([])
   const [meals, setMeals] = useState<any[]>([])
   const [date, setDate] = useState(TODAY)
+
+  // Add panel state
   const [showAdd, setShowAdd] = useState(false)
+  const [mode, setMode] = useState<'log'|'schedule'|'block'>('log')
   const [search, setSearch] = useState('')
+  const [showFavsOnly, setShowFavsOnly] = useState(false)
   const [customName, setCustomName] = useState('')
   const [customCals, setCustomCals] = useState('')
-  const [showFavsOnly, setShowFavsOnly] = useState(false)
+
+  // Schedule options
+  const [schedTime, setSchedTime] = useState('07:00')
+  const [recurrence, setRecurrence] = useState('none')
+  const [recurDays, setRecurDays] = useState<number[]>([])
+  const [recurEnd, setRecurEnd] = useState('')
+  const [blockLabel, setBlockLabel] = useState('Workout')
+
+  // visibility prompt
   const [pendingExercise, setPendingExercise] = useState<any>(null)
+  // fill-in-later modal for a time block
+  const [fillBlock, setFillBlock] = useState<any>(null)
 
   const getFamilyId = async () => {
     const { data: u } = await supabase.auth.getUser()
@@ -36,7 +55,7 @@ export default function FitnessPage() {
 
     const [{ data: e }, { data: p }, { data: m }, { data: fav }] = await Promise.all([
       supabase.from('exercise_library').select('*').order('category').order('name'),
-      supabase.from('planned_workouts').select('*').eq('user_id', userId).eq('scheduled_date', date),
+      supabase.from('planned_workouts').select('*').eq('user_id', userId).eq('scheduled_date', date).order('scheduled_time'),
       supabase.from('planned_meals').select('*').eq('user_id', userId).eq('planned_date', date),
       supabase.from('favorites').select('item_id').eq('user_id', userId).eq('item_type', 'exercise'),
     ])
@@ -58,28 +77,111 @@ export default function FitnessPage() {
     load()
   }
 
-  // When picking an exercise, ask visibility first
+  // Generate the list of dates for a recurring workout
+  const buildDates = (startDate: string): string[] => {
+    if (recurrence === 'none') return [startDate]
+    const dates: string[] = []
+    const start = new Date(startDate + 'T00:00:00')
+    const end = recurEnd ? new Date(recurEnd + 'T00:00:00') : new Date(start.getTime() + 60 * 24 * 60 * 60 * 1000) // default 60 days
+    let cursor = new Date(start)
+    let iter = 0
+    while (cursor <= end && iter < 400) {
+      iter++
+      const dow = cursor.getDay()
+      const dateStr = cursor.toISOString().split('T')[0]
+      if (recurrence === 'daily') dates.push(dateStr)
+      else if (recurrence === 'every_other_day') { dates.push(dateStr); cursor.setDate(cursor.getDate() + 1) }
+      else if (recurrence === 'weekly') { if (dow === start.getDay()) dates.push(dateStr) }
+      else if (recurrence === 'every_other_week') { /* handled below */ }
+      else if (recurrence === 'custom_days') { if (recurDays.includes(dow)) dates.push(dateStr) }
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    // every_other_week: take weekly matches and keep every 2nd
+    if (recurrence === 'every_other_week') {
+      let c = new Date(start)
+      let wk = 0
+      while (c <= end && dates.length < 200) {
+        if (c.getDay() === start.getDay()) {
+          if (wk % 2 === 0) dates.push(c.toISOString().split('T')[0])
+          wk++
+        }
+        c.setDate(c.getDate() + 1)
+      }
+    }
+    return dates
+  }
+
+  // ---- QUICK LOG: log a workout already done (marked complete immediately) ----
+  const quickLog = async (name: string, cals: number, exerciseId: string|null) => {
+    await supabase.from('planned_workouts').insert({
+      family_id: familyId, user_id: uid, exercise_id: exerciseId,
+      custom_name: name, calories: cals, scheduled_date: date,
+      visibility: 'private', show_on_calendar: true,
+      completed: true, completed_at: new Date().toISOString(),
+    })
+    resetPanel(); load()
+  }
+
+  // ---- SCHEDULE: pick exercise then visibility, supports recurrence ----
   const pickExercise = (ex: any) => {
+    if (mode === 'log') { quickLog(ex.name, ex.calories_est, ex.id); return }
     setPendingExercise({ name: ex.name, calories: ex.calories_est, exercise_id: ex.id })
   }
-
-  const confirmAdd = async (visibility: 'private' | 'family') => {
-    const ex = pendingExercise
-    await supabase.from('planned_workouts').insert({
-      family_id: familyId, user_id: uid,
-      exercise_id: ex.exercise_id ?? null,
-      custom_name: ex.name, calories: ex.calories,
-      scheduled_date: date, visibility, show_on_calendar: true,
-    })
-    setPendingExercise(null); setShowAdd(false); setSearch(''); load()
-  }
-
   const pickCustom = () => {
     if (!customName || !customCals) return
+    if (mode === 'log') { quickLog(customName, parseInt(customCals), null); return }
     setPendingExercise({ name: customName, calories: parseInt(customCals), exercise_id: null })
   }
 
+  const confirmAdd = async (visibility: 'private'|'family') => {
+    const ex = pendingExercise
+    const dates = buildDates(date)
+    const sid = dates.length > 1 ? uuid() : null
+    const rows = dates.map(d => ({
+      family_id: familyId, user_id: uid,
+      exercise_id: ex.exercise_id ?? null,
+      custom_name: ex.name, calories: ex.calories,
+      scheduled_date: d, scheduled_time: schedTime || null,
+      visibility, show_on_calendar: true,
+      recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
+      recurrence_end: recurEnd || null, series_id: sid,
+    }))
+    await supabase.from('planned_workouts').insert(rows)
+    setPendingExercise(null); resetPanel(); load()
+  }
+
+  // ---- TIME BLOCK: reserve a time, fill exercise in later ----
+  const addTimeBlock = async () => {
+    const dates = buildDates(date)
+    const sid = dates.length > 1 ? uuid() : null
+    const rows = dates.map(d => ({
+      family_id: familyId, user_id: uid,
+      custom_name: blockLabel || 'Workout', calories: null,
+      scheduled_date: d, scheduled_time: schedTime || null,
+      is_time_block: true, visibility: 'private', show_on_calendar: true,
+      recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
+      recurrence_end: recurEnd || null, series_id: sid,
+    }))
+    await supabase.from('planned_workouts').insert(rows)
+    resetPanel(); load()
+  }
+
+  // Fill in a time block after the fact
+  const completeBlock = async (name: string, cals: number, exerciseId: string|null) => {
+    await supabase.from('planned_workouts').update({
+      custom_name: name, calories: cals, exercise_id: exerciseId,
+      is_time_block: false, completed: true, completed_at: new Date().toISOString(),
+    }).eq('id', fillBlock.id)
+    setFillBlock(null); load()
+  }
+
+  const resetPanel = () => {
+    setShowAdd(false); setSearch(''); setCustomName(''); setCustomCals('')
+    setRecurrence('none'); setRecurDays([]); setRecurEnd(''); setBlockLabel('Workout')
+  }
+
   const toggleComplete = async (w: any) => {
+    if (w.is_time_block) { setFillBlock(w); return } // filling a block = completing it
     await supabase.from('planned_workouts').update({
       completed: !w.completed,
       completed_at: !w.completed ? new Date().toISOString() : null,
@@ -87,8 +189,17 @@ export default function FitnessPage() {
     load()
   }
 
-  const removeWorkout = async (id: string) => {
-    await supabase.from('planned_workouts').delete().eq('id', id)
+  const removeWorkout = async (w: any) => {
+    if (w.series_id) {
+      // ask whether to remove whole series
+      if (confirm('Delete this and all future repeats in the series? Click Cancel to delete just this one.')) {
+        await supabase.from('planned_workouts').delete().eq('series_id', w.series_id).gte('scheduled_date', w.scheduled_date)
+      } else {
+        await supabase.from('planned_workouts').delete().eq('id', w.id)
+      }
+    } else {
+      await supabase.from('planned_workouts').delete().eq('id', w.id)
+    }
     load()
   }
 
@@ -100,6 +211,8 @@ export default function FitnessPage() {
   if (showFavsOnly) displayEx = exercises.filter(e => favorites.includes(e.id))
   if (search) displayEx = displayEx.filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
   displayEx = [...displayEx].sort((a, b) => (favorites.includes(a.id) ? 0 : 1) - (favorites.includes(b.id) ? 0 : 1))
+
+  const toggleDay = (d: number) => setRecurDays(p => p.includes(d) ? p.filter(x => x !== d) : [...p, d])
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -127,81 +240,176 @@ export default function FitnessPage() {
 
       {showAdd && (
         <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-4">
-          <div className="flex gap-2">
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search or scroll the list below..." className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-            <button onClick={() => setShowFavsOnly(!showFavsOnly)} className={`px-3 rounded-lg text-sm font-semibold ${showFavsOnly ? 'bg-[#F59E0B] text-white' : 'bg-[#0F172A] text-[#94A3B8]'}`}>★ Favs</button>
+          {/* Mode selector */}
+          <div className="flex gap-1 bg-[#0F172A] rounded-xl p-1">
+            <button onClick={() => setMode('log')} className={`flex-1 py-2 rounded-lg text-xs font-semibold ${mode==='log'?'bg-[#6366F1] text-white':'text-[#64748B]'}`}>⚡ Log Now</button>
+            <button onClick={() => setMode('schedule')} className={`flex-1 py-2 rounded-lg text-xs font-semibold ${mode==='schedule'?'bg-[#6366F1] text-white':'text-[#64748B]'}`}>📅 Schedule</button>
+            <button onClick={() => setMode('block')} className={`flex-1 py-2 rounded-lg text-xs font-semibold ${mode==='block'?'bg-[#6366F1] text-white':'text-[#64748B]'}`}>⏰ Time Block</button>
           </div>
 
-          <div className="max-h-64 overflow-y-auto space-y-1 border border-[#334155] rounded-lg p-2">
-            {displayEx.map(ex => (
-              <div key={ex.id} className="flex items-center gap-2">
-                <button onClick={(e) => toggleFav(ex.id, e)} className="text-lg px-1">
-                  {favorites.includes(ex.id) ? '⭐' : '☆'}
-                </button>
-                <button onClick={() => pickExercise(ex)} className="flex-1 flex justify-between items-center bg-[#0F172A] hover:bg-[#0A0F1E] rounded-lg px-3 py-2 text-left">
-                  <div>
-                    <div className="text-sm text-[#F1F5F9]">{ex.name}</div>
-                    <div className="text-xs text-[#475569]">{ex.category}</div>
-                  </div>
-                  <span className="text-sm font-bold text-[#F59E0B]">{ex.calories_est} cal</span>
-                </button>
+          <div className="text-xs text-[#64748B]">
+            {mode==='log' && 'Log a workout you already did — it counts toward calories burned right away.'}
+            {mode==='schedule' && 'Plan a workout for a day/time. Can repeat. Check it off when done.'}
+            {mode==='block' && 'Reserve a workout time now, add what you did + calories later.'}
+          </div>
+
+          {/* Schedule + recurrence options (schedule & block modes) */}
+          {(mode==='schedule' || mode==='block') && (
+            <div className="space-y-3 border border-[#334155] rounded-lg p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#94A3B8] w-16">Time</span>
+                <input type="time" value={schedTime} onChange={e => setSchedTime(e.target.value)} className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
               </div>
-            ))}
-            {displayEx.length === 0 && <div className="text-center text-[#475569] text-sm py-4 italic">No exercises match</div>}
-          </div>
-
-          <div className="border-t border-[#334155] pt-4">
-            <div className="text-xs text-[#64748B] uppercase font-semibold mb-2">Or add custom</div>
-            <div className="flex gap-2">
-              <input value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Workout name" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-              <input value={customCals} onChange={e => setCustomCals(e.target.value)} placeholder="Cals" type="number" className="w-20 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-              <button onClick={pickCustom} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">Add</button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#94A3B8] w-16">Repeat</span>
+                <select value={recurrence} onChange={e => setRecurrence(e.target.value)} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                  <option value="none">Doesn't repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="every_other_day">Every other day</option>
+                  <option value="weekly">Weekly (same weekday)</option>
+                  <option value="every_other_week">Every other week</option>
+                  <option value="custom_days">Specific days of week</option>
+                </select>
+              </div>
+              {recurrence==='custom_days' && (
+                <div className="flex gap-1 flex-wrap">
+                  {WEEKDAYS.map((d, i) => (
+                    <button key={i} onClick={() => toggleDay(i)} className={`w-9 h-9 rounded-full text-xs font-semibold ${recurDays.includes(i)?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#64748B]'}`}>{d[0]}</button>
+                  ))}
+                </div>
+              )}
+              {recurrence!=='none' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[#94A3B8] w-16">Until</span>
+                  <input type="date" value={recurEnd} onChange={e => setRecurEnd(e.target.value)} className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                  <span className="text-xs text-[#475569]">(blank = 60 days)</span>
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* TIME BLOCK: just a label + save */}
+          {mode==='block' ? (
+            <div className="space-y-3">
+              <input value={blockLabel} onChange={e => setBlockLabel(e.target.value)} placeholder="Label (e.g. Morning Workout)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <button onClick={addTimeBlock} className="w-full bg-[#6366F1] text-white text-sm font-bold py-2.5 rounded-lg">Reserve Time Block</button>
+            </div>
+          ) : (
+            <>
+              {/* Exercise picker for log & schedule */}
+              <div className="flex gap-2">
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search or scroll the list..." className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+                <button onClick={() => setShowFavsOnly(!showFavsOnly)} className={`px-3 rounded-lg text-sm font-semibold ${showFavsOnly?'bg-[#F59E0B] text-white':'bg-[#0F172A] text-[#94A3B8]'}`}>★</button>
+              </div>
+              <div className="max-h-56 overflow-y-auto space-y-1 border border-[#334155] rounded-lg p-2">
+                {displayEx.map(ex => (
+                  <div key={ex.id} className="flex items-center gap-2">
+                    <button onClick={(e) => toggleFav(ex.id, e)} className="text-lg px-1">{favorites.includes(ex.id)?'⭐':'☆'}</button>
+                    <button onClick={() => pickExercise(ex)} className="flex-1 flex justify-between items-center bg-[#0F172A] hover:bg-[#0A0F1E] rounded-lg px-3 py-2 text-left">
+                      <div><div className="text-sm text-[#F1F5F9]">{ex.name}</div><div className="text-xs text-[#475569]">{ex.category}</div></div>
+                      <span className="text-sm font-bold text-[#F59E0B]">{ex.calories_est} cal</span>
+                    </button>
+                  </div>
+                ))}
+                {displayEx.length === 0 && <div className="text-center text-[#475569] text-sm py-4 italic">No exercises match</div>}
+              </div>
+              <div className="border-t border-[#334155] pt-3">
+                <div className="text-xs text-[#64748B] uppercase font-semibold mb-2">Or custom</div>
+                <div className="flex gap-2">
+                  <input value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Workout name" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+                  <input value={customCals} onChange={e => setCustomCals(e.target.value)} placeholder="Cals" type="number" className="w-20 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+                  <button onClick={pickCustom} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">{mode==='log'?'Log':'Add'}</button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Visibility prompt modal */}
+      {/* Visibility prompt */}
       {pendingExercise && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setPendingExercise(null)}>
           <div className="bg-[#1E293B] border border-[#334155] rounded-2xl p-6 max-w-sm w-full" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-[#F1F5F9] mb-1">Add "{pendingExercise.name}"</h3>
-            <p className="text-sm text-[#64748B] mb-5">Who can see this on the calendar?</p>
+            <p className="text-sm text-[#64748B] mb-5">Who can see this on the calendar?{recurrence!=='none' && ' (applies to all repeats)'}</p>
             <div className="space-y-2">
-              <button onClick={() => confirmAdd('private')} className="w-full bg-[#0F172A] hover:bg-[#0A0F1E] border border-[#334155] rounded-xl p-3 text-left">
-                <div className="font-semibold text-[#F1F5F9] text-sm">🔒 Only me</div>
-                <div className="text-xs text-[#64748B]">Private — just on your calendar</div>
-              </button>
-              <button onClick={() => confirmAdd('family')} className="w-full bg-[#0F172A] hover:bg-[#0A0F1E] border border-[#334155] rounded-xl p-3 text-left">
-                <div className="font-semibold text-[#F1F5F9] text-sm">👨‍👩‍👧 Whole family</div>
-                <div className="text-xs text-[#64748B]">Visible to everyone in the family</div>
-              </button>
+              <button onClick={() => confirmAdd('private')} className="w-full bg-[#0F172A] hover:bg-[#0A0F1E] border border-[#334155] rounded-xl p-3 text-left"><div className="font-semibold text-[#F1F5F9] text-sm">🔒 Only me</div></button>
+              <button onClick={() => confirmAdd('family')} className="w-full bg-[#0F172A] hover:bg-[#0A0F1E] border border-[#334155] rounded-xl p-3 text-left"><div className="font-semibold text-[#F1F5F9] text-sm">👨‍👩‍👧 Whole family</div></button>
             </div>
             <button onClick={() => setPendingExercise(null)} className="w-full mt-3 text-[#64748B] text-sm py-2">Cancel</button>
           </div>
         </div>
       )}
 
-      <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide mb-3">Scheduled — {planned.length} workouts</div>
+      {/* Fill-in-block modal */}
+      {fillBlock && (
+        <FillBlockModal
+          exercises={exercises}
+          onClose={() => setFillBlock(null)}
+          onSave={completeBlock}
+        />
+      )}
+
+      <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide mb-3">Scheduled — {planned.length} this day</div>
       <div className="space-y-2">
         {planned.map(w => (
-          <div key={w.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center justify-between">
+          <div key={w.id} className={`border rounded-xl p-4 flex items-center justify-between ${w.is_time_block ? 'bg-[#1E1B4B]/30 border-dashed border-[#6366F1]/40' : 'bg-[#1E293B] border-[#334155]'}`}>
             <div className="flex items-center gap-3">
               <button onClick={() => toggleComplete(w)} className={`w-6 h-6 rounded-full flex items-center justify-center border-2 ${w.completed ? 'bg-[#10B981] border-[#10B981]' : 'border-[#475569]'}`}>
                 {w.completed && <span className="text-white text-xs">✓</span>}
               </button>
               <div>
-                <span className={`text-sm font-semibold ${w.completed ? 'text-[#64748B] line-through' : 'text-[#F1F5F9]'}`}>{w.custom_name}</span>
-                <span className="text-xs text-[#475569] ml-2">{w.visibility === 'family' ? '👨‍👩‍👧' : '🔒'}</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-semibold ${w.completed ? 'text-[#64748B] line-through' : 'text-[#F1F5F9]'}`}>{w.custom_name}</span>
+                  {w.is_time_block && <span className="text-[10px] font-bold text-[#A5B4FC] bg-[#312E81] px-1.5 py-0.5 rounded">TAP TO FILL IN</span>}
+                  {w.series_id && <span className="text-xs text-[#475569]">🔁</span>}
+                </div>
+                <div className="text-xs text-[#475569]">
+                  {w.scheduled_time && w.scheduled_time.slice(0,5)} {w.visibility==='family' ? '· 👨‍👩‍👧' : '· 🔒'}
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-sm font-bold text-[#F59E0B]">{w.calories} cal</span>
-              <button onClick={() => removeWorkout(w.id)} className="text-[#64748B] hover:text-red-400 text-sm">✕</button>
+              {w.calories != null && <span className="text-sm font-bold text-[#F59E0B]">{w.calories} cal</span>}
+              <button onClick={() => removeWorkout(w)} className="text-[#64748B] hover:text-red-400 text-sm">✕</button>
             </div>
           </div>
         ))}
-        {planned.length === 0 && <div className="text-center text-[#475569] italic py-8">No workouts scheduled — add one above</div>}
+        {planned.length === 0 && <div className="text-center text-[#475569] italic py-8">Nothing yet — add a workout above</div>}
+      </div>
+    </div>
+  )
+}
+
+function FillBlockModal({ exercises, onClose, onSave }: any) {
+  const [search, setSearch] = useState('')
+  const [customName, setCustomName] = useState('')
+  const [customCals, setCustomCals] = useState('')
+  const filtered = search ? exercises.filter((e: any) => e.name.toLowerCase().includes(search.toLowerCase())) : exercises
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#1E293B] border border-[#334155] rounded-2xl p-5 max-w-sm w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-bold text-[#F1F5F9] mb-1">What did you do?</h3>
+        <p className="text-sm text-[#64748B] mb-4">Add the workout and calories for this time block.</p>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search exercises..." className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm mb-2 focus:outline-none focus:border-[#6366F1]" />
+        <div className="max-h-48 overflow-y-auto space-y-1 mb-3">
+          {filtered.map((ex: any) => (
+            <button key={ex.id} onClick={() => onSave(ex.name, ex.calories_est, ex.id)} className="w-full flex justify-between items-center bg-[#0F172A] hover:bg-[#0A0F1E] rounded-lg px-3 py-2 text-left">
+              <span className="text-sm text-[#F1F5F9]">{ex.name}</span>
+              <span className="text-sm font-bold text-[#F59E0B]">{ex.calories_est} cal</span>
+            </button>
+          ))}
+        </div>
+        <div className="border-t border-[#334155] pt-3">
+          <div className="text-xs text-[#64748B] uppercase font-semibold mb-2">Or custom</div>
+          <div className="flex gap-2">
+            <input value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Name" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <input value={customCals} onChange={e => setCustomCals(e.target.value)} placeholder="Cals" type="number" className="w-20 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <button onClick={() => customName && customCals && onSave(customName, parseInt(customCals), null)} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">Save</button>
+          </div>
+        </div>
+        <button onClick={onClose} className="w-full mt-3 text-[#64748B] text-sm py-2">Cancel</button>
       </div>
     </div>
   )
