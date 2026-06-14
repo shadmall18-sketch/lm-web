@@ -2,13 +2,35 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
+const ABOUT_FIELDS = [
+  { key: 'favorite_color', label: 'Favorite Color' },
+  { key: 'favorite_snacks', label: 'Favorite Snacks' },
+  { key: 'favorite_foods', label: 'Favorite Foods' },
+  { key: 'favorite_activities', label: 'Favorite Activities' },
+  { key: 'favorite_with_others', label: 'Loves Doing Together' },
+  { key: 'hobbies', label: 'Hobbies' },
+  { key: 'clothing_size', label: 'Clothing Size' },
+  { key: 'shoe_size', label: 'Shoe Size' },
+  { key: 'allergies', label: 'Allergies' },
+]
+
+const BLANK = {
+  first_name:'', last_name:'', relationship:'', date_of_birth:'', phone:'', email:'', address:'', notes:'',
+  favorite_color:'', favorite_snacks:'', favorite_foods:'', favorite_activities:'',
+  favorite_with_others:'', hobbies:'', clothing_size:'', shoe_size:'', allergies:'',
+}
+
 export default function ContactsPage() {
   const supabase = createClient()
   const [contacts, setContacts] = useState<any[]>([])
   const [selected, setSelected] = useState<any>(null)
   const [gifts, setGifts] = useState<any[]>([])
+  const [notes, setNotes] = useState<any[]>([])
+  const [newNote, setNewNote] = useState('')
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({ first_name:'', last_name:'', relationship:'', date_of_birth:'', phone:'', email:'', notes:'' })
+  const [showAboutFields, setShowAboutFields] = useState(false)
+  const [form, setForm] = useState<any>(BLANK)
+  const [me, setMe] = useState<any>(null)
 
   const getFamilyId = async () => {
     const { data: u } = await supabase.auth.getUser()
@@ -19,20 +41,18 @@ export default function ContactsPage() {
   const load = async () => {
     const { data } = await supabase.from('contacts').select('*, preferences:contact_preferences(*)').order('first_name')
 
-    // Pull in family + network members as auto-contacts with About Me info
     const { data: u } = await supabase.auth.getUser()
-    const { data: me } = await supabase.from('users').select('family_id').eq('id', u.user!.id).single()
+    const { data: meData } = await supabase.from('users').select('id, family_id').eq('id', u.user!.id).single()
+    setMe(meData)
 
-    // Find connected network family ids
     const { data: nets } = await supabase.from('family_networks')
       .select('family_id_a, family_id_b')
-      .or(`family_id_a.eq.${me?.family_id},family_id_b.eq.${me?.family_id}`)
+      .or(`family_id_a.eq.${meData?.family_id},family_id_b.eq.${meData?.family_id}`)
     const networkFamilyIds = (nets ?? []).map((n: any) =>
-      n.family_id_a === me?.family_id ? n.family_id_b : n.family_id_a
+      n.family_id_a === meData?.family_id ? n.family_id_b : n.family_id_a
     )
-    const allFamilyIds = [me?.family_id, ...networkFamilyIds]
+    const allFamilyIds = [meData?.family_id, ...networkFamilyIds]
 
-    // Get all members of those families + their about_me
     const { data: members } = await supabase.from('users')
       .select('id, display_name, family_id, is_child, family:families(name)')
       .in('family_id', allFamilyIds)
@@ -45,71 +65,130 @@ export default function ContactsPage() {
       const about = aboutMap.get(m.id)
       return {
         id: `member-${m.id}`,
+        person_key: `member-${m.id}`,
         first_name: m.display_name?.split(' ')[0] ?? m.display_name,
         last_name: m.display_name?.split(' ').slice(1).join(' ') ?? '',
-        relationship: m.family_id === me?.family_id ? 'Family' : `${(m.family as any)?.name ?? 'Network'} Family`,
-        is_family_member: m.family_id === me?.family_id,
+        relationship: m.family_id === meData?.family_id ? 'Family' : `${(m.family as any)?.name ?? 'Network'} Family`,
+        is_family_member: m.family_id === meData?.family_id,
         isMember: true,
         about,
-        preferences: about ? [
-          about.favorite_color && { id: 'c', label: 'Favorite Color', value: about.favorite_color },
-          about.favorite_snacks && { id: 's', label: 'Favorite Snacks', value: about.favorite_snacks },
-          about.favorite_foods && { id: 'f', label: 'Favorite Foods', value: about.favorite_foods },
-          about.favorite_activities && { id: 'a', label: 'Favorite Activities', value: about.favorite_activities },
-          about.favorite_with_others && { id: 'w', label: 'Loves Doing Together', value: about.favorite_with_others },
-          about.hobbies && { id: 'h', label: 'Hobbies', value: about.hobbies },
-          about.clothing_size && { id: 'cl', label: 'Clothing Size', value: about.clothing_size },
-          about.shoe_size && { id: 'sh', label: 'Shoe Size', value: about.shoe_size },
-          about.allergies && { id: 'al', label: 'Allergies', value: about.allergies },
-        ].filter(Boolean) : [],
       }
     })
 
-    setContacts([...memberContacts, ...(data ?? [])])
+    const dbContacts = (data ?? []).map((c: any) => ({ ...c, person_key: `contact-${c.id}` }))
+    setContacts([...memberContacts, ...dbContacts])
   }
 
   useEffect(() => { load() }, [])
 
   const handleSelect = async (c: any) => {
     setSelected(c)
+    setNewNote('')
+    // Load notes about this person (visible to whole family)
+    const { data: noteData } = await supabase.from('person_notes')
+      .select('*, author:users!author_id(display_name)')
+      .eq('person_key', c.person_key)
+      .order('created_at', { ascending: false })
+    setNotes(noteData ?? [])
     if (c.isMember) { setGifts([]); return }
     const { data } = await supabase.from('gifts').select('*').eq('contact_id', c.id).order('created_at', { ascending: false })
     setGifts(data ?? [])
+  }
+
+  const addNote = async () => {
+    if (!newNote.trim()) return
+    const fid = await getFamilyId()
+    await supabase.from('person_notes').insert({
+      family_id: fid, author_id: me.id, person_key: selected.person_key, note: newNote.trim(),
+    })
+    setNewNote('')
+    handleSelect(selected)
+  }
+
+  const deleteNote = async (id: string) => {
+    await supabase.from('person_notes').delete().eq('id', id)
+    handleSelect(selected)
   }
 
   const handleAdd = async () => {
     if (!form.first_name) return
     const fid = await getFamilyId()
     await supabase.from('contacts').insert({ ...form, family_id: fid, date_of_birth: form.date_of_birth || null })
-    setShowAdd(false); setForm({ first_name:'', last_name:'', relationship:'', date_of_birth:'', phone:'', email:'', notes:'' }); load()
+    setShowAdd(false); setShowAboutFields(false); setForm(BLANK); load()
   }
 
-  if (selected) return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <button onClick={() => setSelected(null)} className="text-[#6366F1] mb-6 hover:underline">← Back</button>
-      <div className="flex flex-col items-center mb-6">
-        <div className="w-20 h-20 rounded-full bg-[#6366F1] flex items-center justify-center text-white font-black text-3xl mb-3">{selected.first_name[0]}{selected.last_name?.[0]??''}</div>
-        <h1 className="text-2xl font-bold text-[#F1F5F9]">{selected.first_name} {selected.last_name}</h1>
-        {selected.relationship && <p className="text-[#64748B] mt-1">{selected.relationship}</p>}
-      </div>
-      <div className="space-y-2 mb-6">
-        {selected.date_of_birth && <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex justify-between"><span className="text-[#64748B]">🎂 Birthday</span><span className="text-[#F1F5F9] font-semibold">{new Date(selected.date_of_birth).toLocaleDateString()}</span></div>}
-        {selected.phone && <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex justify-between"><span className="text-[#64748B]">📞 Phone</span><span className="text-[#F1F5F9] font-semibold">{selected.phone}</span></div>}
-        {selected.email && <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex justify-between"><span className="text-[#64748B]">✉️ Email</span><span className="text-[#F1F5F9] font-semibold">{selected.email}</span></div>}
-        {selected.notes && <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4"><span className="text-[#64748B] block mb-1">📝 Notes</span><span className="text-[#F1F5F9]">{selected.notes}</span></div>}
-      </div>
-      {selected.preferences?.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">Preferences</h2>
-          <div className="space-y-2">{selected.preferences.map((p: any) => <div key={p.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-3 flex justify-between"><span className="text-[#94A3B8]">{p.label}</span><span className="text-[#F1F5F9] font-semibold">{p.value}</span></div>)}</div>
+  // Build the "about" rows for display — from member's about_me OR contact's own fields
+  const buildAboutRows = (c: any) => {
+    const src = c.isMember ? (c.about ?? {}) : c
+    return ABOUT_FIELDS.map(f => src[f.key] ? { label: f.label, value: src[f.key] } : null).filter(Boolean) as any[]
+  }
+
+  if (selected) {
+    const aboutRows = buildAboutRows(selected)
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <button onClick={() => setSelected(null)} className="text-[#6366F1] mb-6 hover:underline">← Back</button>
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-20 h-20 rounded-full bg-[#6366F1] flex items-center justify-center text-white font-black text-3xl mb-3">{selected.first_name[0]}{selected.last_name?.[0]??''}</div>
+          <h1 className="text-2xl font-bold text-[#F1F5F9]">{selected.first_name} {selected.last_name}</h1>
+          {selected.relationship && <p className="text-[#64748B] mt-1">{selected.relationship}</p>}
+          {selected.isMember && <span className="mt-2 text-xs font-semibold text-[#6366F1] bg-[#1E1B4B] px-3 py-1 rounded-full">On LM · profile they filled out</span>}
         </div>
-      )}
-      <div>
-        <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">Gift Ideas</h2>
-        {gifts.length === 0 ? <div className="text-[#475569] italic text-sm">No gift ideas yet</div> : gifts.map(g => <div key={g.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-3 flex justify-between mb-2"><span className="text-[#F1F5F9]">{g.title}</span><span className={`text-xs font-semibold capitalize ${g.status==='purchased'?'text-green-400':'text-[#64748B]'}`}>{g.status}</span></div>)}
+
+        {/* Contact Info */}
+        {(selected.date_of_birth || selected.phone || selected.email || selected.address) && (
+          <div className="mb-6">
+            <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">Contact Info</h2>
+            <div className="space-y-2">
+              {selected.date_of_birth && <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex justify-between"><span className="text-[#64748B]">🎂 Birthday</span><span className="text-[#F1F5F9] font-semibold">{new Date(selected.date_of_birth).toLocaleDateString()}</span></div>}
+              {selected.phone && <a href={`tel:${selected.phone}`} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex justify-between hover:border-[#6366F1]"><span className="text-[#64748B]">📞 Phone</span><span className="text-[#F1F5F9] font-semibold">{selected.phone}</span></a>}
+              {selected.email && <a href={`mailto:${selected.email}`} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex justify-between hover:border-[#6366F1]"><span className="text-[#64748B]">✉️ Email</span><span className="text-[#F1F5F9] font-semibold">{selected.email}</span></a>}
+              {selected.address && <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4"><span className="text-[#64748B] block mb-1">📍 Address</span><span className="text-[#F1F5F9]">{selected.address}</span></div>}
+            </div>
+          </div>
+        )}
+
+        {/* About Me */}
+        {aboutRows.length > 0 && (
+          <div className="mb-6">
+            <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">About {selected.first_name}</h2>
+            <div className="space-y-2">
+              {aboutRows.map((p, i) => <div key={i} className="bg-[#1E293B] border border-[#334155] rounded-xl p-3 flex justify-between"><span className="text-[#94A3B8]">{p.label}</span><span className="text-[#F1F5F9] font-semibold text-right">{p.value}</span></div>)}
+            </div>
+          </div>
+        )}
+
+        {/* Notes — anyone in family can add about this person */}
+        <div className="mb-6">
+          <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">Notes</h2>
+          <div className="flex gap-2 mb-3">
+            <input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => e.key==='Enter' && addNote()} placeholder={`Add a note about ${selected.first_name}...`} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <button onClick={addNote} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">Add</button>
+          </div>
+          <div className="space-y-2">
+            {notes.map(n => (
+              <div key={n.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-3">
+                <div className="flex justify-between items-start">
+                  <span className="text-[#F1F5F9] text-sm">{n.note}</span>
+                  {n.author_id === me?.id && <button onClick={() => deleteNote(n.id)} className="text-[#64748B] hover:text-red-400 text-xs ml-2">✕</button>}
+                </div>
+                <div className="text-xs text-[#475569] mt-1">— {n.author?.display_name} · {new Date(n.created_at).toLocaleDateString()}</div>
+              </div>
+            ))}
+            {notes.length === 0 && <div className="text-[#475569] italic text-sm">No notes yet</div>}
+          </div>
+        </div>
+
+        {/* Gift Ideas — only for non-member contacts */}
+        {!selected.isMember && (
+          <div>
+            <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">Gift Ideas</h2>
+            {gifts.length === 0 ? <div className="text-[#475569] italic text-sm">No gift ideas yet</div> : gifts.map(g => <div key={g.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-3 flex justify-between mb-2"><span className="text-[#F1F5F9]">{g.title}</span><span className={`text-xs font-semibold capitalize ${g.status==='purchased'?'text-green-400':'text-[#64748B]'}`}>{g.status}</span></div>)}
+          </div>
+        )}
       </div>
-    </div>
-  )
+    )
+  }
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -120,17 +199,35 @@ export default function ContactsPage() {
 
       {showAdd && (
         <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-3">
+          <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide">Basic Info</div>
           <div className="grid grid-cols-2 gap-3">
-            <input value={form.first_name} onChange={e => setForm(p=>({...p,first_name:e.target.value}))} placeholder="First name *" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-            <input value={form.last_name} onChange={e => setForm(p=>({...p,last_name:e.target.value}))} placeholder="Last name" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <input value={form.first_name} onChange={e => setForm((p:any)=>({...p,first_name:e.target.value}))} placeholder="First name *" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <input value={form.last_name} onChange={e => setForm((p:any)=>({...p,last_name:e.target.value}))} placeholder="Last name" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
           </div>
-          <input value={form.relationship} onChange={e => setForm(p=>({...p,relationship:e.target.value}))} placeholder="Relationship (Grandma, Coach...)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-          <input value={form.phone} onChange={e => setForm(p=>({...p,phone:e.target.value}))} placeholder="Phone" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-          <input value={form.date_of_birth} onChange={e => setForm(p=>({...p,date_of_birth:e.target.value}))} type="date" placeholder="Birthday" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
-          <textarea value={form.notes} onChange={e => setForm(p=>({...p,notes:e.target.value}))} placeholder="Notes" rows={2} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1] resize-none" />
+          <input value={form.relationship} onChange={e => setForm((p:any)=>({...p,relationship:e.target.value}))} placeholder="Relationship (Grandma, Coach, Friend...)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+
+          <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide pt-2">Contact Info</div>
+          <input value={form.phone} onChange={e => setForm((p:any)=>({...p,phone:e.target.value}))} placeholder="Phone" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+          <input value={form.email} onChange={e => setForm((p:any)=>({...p,email:e.target.value}))} placeholder="Email" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+          <input value={form.address} onChange={e => setForm((p:any)=>({...p,address:e.target.value}))} placeholder="Address" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+          <input value={form.date_of_birth} onChange={e => setForm((p:any)=>({...p,date_of_birth:e.target.value}))} type="date" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+
+          {/* Optional About Me for non-connected friends */}
+          <button onClick={() => setShowAboutFields(!showAboutFields)} className="text-[#6366F1] text-sm font-semibold">
+            {showAboutFields ? '− Hide' : '+ Add'} About Me details (for friends not on LM)
+          </button>
+          {showAboutFields && (
+            <div className="space-y-2 border-t border-[#334155] pt-3">
+              {ABOUT_FIELDS.map(f => (
+                <input key={f.key} value={form[f.key]} onChange={e => setForm((p:any)=>({...p,[f.key]:e.target.value}))} placeholder={f.label} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              ))}
+            </div>
+          )}
+
+          <textarea value={form.notes} onChange={e => setForm((p:any)=>({...p,notes:e.target.value}))} placeholder="Quick note" rows={2} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1] resize-none" />
           <div className="flex gap-2">
             <button onClick={handleAdd} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
-            <button onClick={() => setShowAdd(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
+            <button onClick={() => { setShowAdd(false); setShowAboutFields(false); setForm(BLANK) }} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
           </div>
         </div>
       )}
@@ -156,6 +253,7 @@ function ContactRow({ contact, onClick }: any) {
         <div className="font-semibold text-[#F1F5F9]">{contact.first_name} {contact.last_name}</div>
         {contact.relationship && <div className="text-sm text-[#64748B]">{contact.relationship}</div>}
       </div>
+      {contact.isMember && <span className="text-xs text-[#6366F1]">LM</span>}
       <span className="text-[#475569]">›</span>
     </button>
   )
