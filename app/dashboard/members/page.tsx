@@ -62,6 +62,11 @@ export default function MembersPage() {
     }
   }
 
+  const cancelInvite = async (id: string) => {
+    await supabase.from('user_invites').delete().eq('id', id)
+    load()
+  }
+
   const isAdmin = user?.role === 'admin'
 
   return (
@@ -103,7 +108,10 @@ export default function MembersPage() {
                     <div className="font-semibold text-[#94A3B8]">{i.email}</div>
                     <div className="text-xs text-[#475569] mt-0.5">Invited · expires {new Date(i.expires_at).toLocaleDateString()}</div>
                   </div>
-                  <span className="text-xs font-bold text-[#F59E0B] bg-[#78350F]/40 px-2 py-1 rounded-lg">Pending</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-[#F59E0B] bg-[#78350F]/40 px-2 py-1 rounded-lg">Pending</span>
+                    <button onClick={() => cancelInvite(i.id)} className="text-xs font-semibold text-red-400 hover:text-red-300 bg-red-900/20 px-2 py-1 rounded-lg">Remove</button>
+                  </div>
                 </div>
               ))}
             </>

@@ -2,16 +2,21 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
+const TODAY = new Date().toISOString().split('T')[0]
+
 export default function FitnessPage() {
   const supabase = createClient()
-  const [user, setUser] = useState<any>(null)
-  const [feed, setFeed] = useState<any[]>([])
-  const [goals, setGoals] = useState<any[]>([])
-  const [tab, setTab] = useState<'feed'|'goals'>('feed')
-  const [showLog, setShowLog] = useState(false)
-  const [showGoal, setShowGoal] = useState(false)
-  const [wForm, setWForm] = useState({ title:'', workout_type:'Run', duration_mins:'', calories:'', notes:'', is_private: false })
-  const [gForm, setGForm] = useState({ title:'', target_value:'', target_unit:'', target_date:'', is_private: false })
+  const [uid, setUid] = useState('')
+  const [familyId, setFamilyId] = useState('')
+  const [tab, setTab] = useState<'plan' | 'library'>('plan')
+  const [exercises, setExercises] = useState<any[]>([])
+  const [planned, setPlanned] = useState<any[]>([])
+  const [meals, setMeals] = useState<any[]>([])
+  const [date, setDate] = useState(TODAY)
+  const [showAdd, setShowAdd] = useState(false)
+  const [search, setSearch] = useState('')
+  const [customName, setCustomName] = useState('')
+  const [customCals, setCustomCals] = useState('')
 
   const getFamilyId = async () => {
     const { data: u } = await supabase.auth.getUser()
@@ -22,124 +27,129 @@ export default function FitnessPage() {
   const load = async () => {
     const { data: sess } = await supabase.auth.getSession()
     if (!sess.session) return
-    const { data: profile } = await supabase.from('users').select('*').eq('id', sess.session.user.id).single()
-    setUser(profile)
-    const [{ data: f }, { data: g }] = await Promise.all([
-      supabase.from('workouts').select('*, user:users(display_name)').eq('is_private', false).order('logged_at', { ascending: false }).limit(20),
-      supabase.from('fitness_goals').select('*, user:users(display_name)').order('created_at', { ascending: false }),
+    const userId = sess.session.user.id
+    setUid(userId)
+    const fid = await getFamilyId()
+    setFamilyId(fid)
+
+    const [{ data: e }, { data: p }, { data: m }] = await Promise.all([
+      supabase.from('exercise_library').select('*').order('category').order('name'),
+      supabase.from('planned_workouts').select('*').eq('user_id', userId).eq('scheduled_date', date),
+      supabase.from('planned_meals').select('*').eq('user_id', userId).eq('planned_date', date),
     ])
-    setFeed(f ?? []); setGoals(g ?? [])
+    setExercises(e ?? [])
+    setPlanned(p ?? [])
+    setMeals(m ?? [])
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [date])
 
-  const handleLog = async () => {
-    if (!wForm.title) return
-    const { data: u } = await supabase.auth.getUser()
-    const fid = await getFamilyId()
-    await supabase.from('workouts').insert({ title: wForm.title, workout_type: wForm.workout_type.toLowerCase(), duration_mins: parseInt(wForm.duration_mins)||null, calories: parseInt(wForm.calories)||null, notes: wForm.notes, is_private: wForm.is_private, family_id: fid, user_id: u.user!.id })
-    setShowLog(false); setWForm({ title:'', workout_type:'Run', duration_mins:'', calories:'', notes:'', is_private: false }); load()
+  const addExercise = async (ex: any) => {
+    await supabase.from('planned_workouts').insert({
+      family_id: familyId, user_id: uid, exercise_id: ex.id,
+      custom_name: ex.name, calories: ex.calories_est, scheduled_date: date,
+    })
+    setShowAdd(false); setSearch(''); load()
   }
 
-  const handleAddGoal = async () => {
-    if (!gForm.title) return
-    const { data: u } = await supabase.auth.getUser()
-    const fid = await getFamilyId()
-    await supabase.from('fitness_goals').insert({ title: gForm.title, goal_type: 'custom', target_value: parseFloat(gForm.target_value)||null, target_unit: gForm.target_unit, target_date: gForm.target_date||null, is_private: gForm.is_private, status: 'active', family_id: fid, user_id: u.user!.id })
-    setShowGoal(false); setGForm({ title:'', target_value:'', target_unit:'', target_date:'', is_private: false }); load()
+  const addCustom = async () => {
+    if (!customName || !customCals) return
+    await supabase.from('planned_workouts').insert({
+      family_id: familyId, user_id: uid,
+      custom_name: customName, calories: parseInt(customCals), scheduled_date: date,
+    })
+    setCustomName(''); setCustomCals(''); setShowAdd(false); load()
   }
 
-  const TYPES = ['Run','Walk','Lift','Yoga','Bike','Swim','HIIT','Custom']
+  const toggleComplete = async (w: any) => {
+    await supabase.from('planned_workouts').update({
+      completed: !w.completed,
+      completed_at: !w.completed ? new Date().toISOString() : null,
+    }).eq('id', w.id)
+    load()
+  }
+
+  const removeWorkout = async (id: string) => {
+    await supabase.from('planned_workouts').delete().eq('id', id)
+    load()
+  }
+
+  const burned = planned.filter(w => w.completed).reduce((s, w) => s + (w.calories ?? 0), 0)
+  const consumed = meals.reduce((s, m) => s + m.calories, 0)
+  const net = consumed - burned
+
+  const categories = [...new Set(exercises.map(e => e.category))]
+  const filtered = exercises.filter(e => e.name.toLowerCase().includes(search.toLowerCase()))
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-[#F1F5F9]">Fitness</h1>
-        <div className="flex gap-2">
-          <button onClick={() => setShowLog(!showLog)} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-xl hover:bg-[#4F46E5]">+ Workout</button>
-          <button onClick={() => setShowGoal(!showGoal)} className="bg-[#1E293B] border border-[#334155] text-white text-sm font-bold px-4 py-2 rounded-xl hover:border-[#6366F1]">+ Goal</button>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="bg-[#1E293B] border border-[#334155] rounded-xl px-4 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+      </div>
+
+      {/* Calorie summary */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#F59E0B]">
+          <div className="text-xs text-[#64748B] uppercase font-semibold">Burned</div>
+          <div className="text-2xl font-black text-[#F59E0B] mt-1">{burned}</div>
+        </div>
+        <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#10B981]">
+          <div className="text-xs text-[#64748B] uppercase font-semibold">Consumed</div>
+          <div className="text-2xl font-black text-[#10B981] mt-1">{consumed}</div>
+        </div>
+        <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4" style={{ borderColor: net > 0 ? '#6366F1' : '#10B981' }}>
+          <div className="text-xs text-[#64748B] uppercase font-semibold">Net</div>
+          <div className="text-2xl font-black mt-1" style={{ color: net > 0 ? '#6366F1' : '#10B981' }}>{net > 0 ? '+' : ''}{net}</div>
         </div>
       </div>
 
-      {showLog && (
-        <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-3">
-          <input value={wForm.title} onChange={e => setWForm(p=>({...p,title:e.target.value}))} placeholder="Workout title" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-          <div className="flex gap-2 flex-wrap">{TYPES.map(t => <button key={t} onClick={() => setWForm(p=>({...p,workout_type:t}))} className={`px-3 py-1.5 rounded-full text-xs font-semibold ${wForm.workout_type===t?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#94A3B8]'}`}>{t}</button>)}</div>
-          <div className="grid grid-cols-2 gap-3">
-            <input value={wForm.duration_mins} onChange={e => setWForm(p=>({...p,duration_mins:e.target.value}))} placeholder="Duration (mins)" type="number" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-            <input value={wForm.calories} onChange={e => setWForm(p=>({...p,calories:e.target.value}))} placeholder="Calories" type="number" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-          </div>
-          <label className="flex items-center gap-2 text-sm text-[#94A3B8] cursor-pointer">
-            <input type="checkbox" checked={!wForm.is_private} onChange={e => setWForm(p=>({...p,is_private:!e.target.checked}))} className="accent-[#6366F1]" />
-            Share with family
-          </label>
-          <div className="flex gap-2">
-            <button onClick={handleLog} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
-            <button onClick={() => setShowLog(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
-          </div>
-        </div>
-      )}
+      <button onClick={() => setShowAdd(!showAdd)} className="bg-[#6366F1] hover:bg-[#4F46E5] text-white text-sm font-bold px-4 py-2.5 rounded-xl mb-6">+ Add Workout</button>
 
-      {showGoal && (
-        <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-3">
-          <input value={gForm.title} onChange={e => setGForm(p=>({...p,title:e.target.value}))} placeholder="Goal title" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-          <div className="grid grid-cols-2 gap-3">
-            <input value={gForm.target_value} onChange={e => setGForm(p=>({...p,target_value:e.target.value}))} placeholder="Target (e.g. 5)" type="number" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-            <input value={gForm.target_unit} onChange={e => setGForm(p=>({...p,target_unit:e.target.value}))} placeholder="Unit (miles, lbs...)" className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-          </div>
-          <input value={gForm.target_date} onChange={e => setGForm(p=>({...p,target_date:e.target.value}))} type="date" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
-          <label className="flex items-center gap-2 text-sm text-[#94A3B8] cursor-pointer">
-            <input type="checkbox" checked={!gForm.is_private} onChange={e => setGForm(p=>({...p,is_private:!e.target.checked}))} className="accent-[#6366F1]" />
-            Share with family
-          </label>
-          <div className="flex gap-2">
-            <button onClick={handleAddGoal} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
-            <button onClick={() => setShowGoal(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex bg-[#1E293B] rounded-xl p-1 mb-6 border border-[#334155]">
-        {(['feed','goals'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${tab===t?'bg-[#6366F1] text-white':'text-[#64748B]'}`}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>)}
-      </div>
-
-      {tab==='feed' && (
-        <div className="space-y-4">
-          {feed.map(w => (
-            <div key={w.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 rounded-full bg-[#6366F1] flex items-center justify-center text-white font-bold">{w.user?.display_name?.[0]}</div>
+      {showAdd && (
+        <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-4">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search exercise library..." className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+          <div className="max-h-56 overflow-y-auto space-y-1">
+            {(search ? filtered : exercises).map(ex => (
+              <button key={ex.id} onClick={() => addExercise(ex)} className="w-full flex justify-between items-center bg-[#0F172A] hover:bg-[#0A0F1E] rounded-lg px-3 py-2 text-left">
                 <div>
-                  <div className="font-semibold text-[#F1F5F9] text-sm">{w.user?.display_name}</div>
-                  <div className="text-xs text-[#64748B]">{new Date(w.logged_at).toLocaleDateString()}</div>
+                  <div className="text-sm text-[#F1F5F9]">{ex.name}</div>
+                  <div className="text-xs text-[#475569]">{ex.category}</div>
                 </div>
-              </div>
-              <div className="font-bold text-[#F1F5F9] mb-2">{w.title}</div>
-              <div className="flex gap-4">
-                {w.duration_mins && <span className="text-sm text-[#94A3B8]">⏱ {w.duration_mins} min</span>}
-                {w.calories && <span className="text-sm text-[#94A3B8]">🔥 {w.calories} cal</span>}
-                {w.workout_type && <span className="text-sm text-[#94A3B8]">💪 {w.workout_type}</span>}
-              </div>
+                <span className="text-sm font-bold text-[#F59E0B]">{ex.calories_est} cal</span>
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-[#334155] pt-4">
+            <div className="text-xs text-[#64748B] uppercase font-semibold mb-2">Or add custom</div>
+            <div className="flex gap-2">
+              <input value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Workout name" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <input value={customCals} onChange={e => setCustomCals(e.target.value)} placeholder="Cals" type="number" className="w-20 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <button onClick={addCustom} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">Add</button>
             </div>
-          ))}
-          {feed.length===0 && <div className="text-center text-[#475569] italic py-12">No shared workouts yet</div>}
+          </div>
         </div>
       )}
 
-      {tab==='goals' && (
-        <div className="space-y-2">
-          {goals.map(g => (
-            <div key={g.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <div className="font-semibold text-[#F1F5F9]">{g.title}</div>
-                <div className="text-sm text-[#64748B] mt-0.5">{g.user?.display_name} {g.target_value && `· ${g.target_value} ${g.target_unit}`}</div>
-              </div>
-              <span className={`text-xs font-bold px-2 py-1 rounded-lg ${g.status==='completed'?'bg-green-900 text-green-400':'bg-[#1E3A5F] text-[#93C5FD]'}`}>{g.status}</span>
+      {/* Planned workouts */}
+      <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide mb-3">Scheduled — {planned.length} workouts</div>
+      <div className="space-y-2">
+        {planned.map(w => (
+          <div key={w.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={() => toggleComplete(w)} className={`w-6 h-6 rounded-full flex items-center justify-center border-2 ${w.completed ? 'bg-[#10B981] border-[#10B981]' : 'border-[#475569]'}`}>
+                {w.completed && <span className="text-white text-xs">✓</span>}
+              </button>
+              <span className={`text-sm font-semibold ${w.completed ? 'text-[#64748B] line-through' : 'text-[#F1F5F9]'}`}>{w.custom_name}</span>
             </div>
-          ))}
-          {goals.length===0 && <div className="text-center text-[#475569] italic py-12">No goals set yet</div>}
-        </div>
-      )}
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-bold text-[#F59E0B]">{w.calories} cal</span>
+              <button onClick={() => removeWorkout(w.id)} className="text-[#64748B] hover:text-red-400 text-sm">✕</button>
+            </div>
+          </div>
+        ))}
+        {planned.length === 0 && <div className="text-center text-[#475569] italic py-8">No workouts scheduled — add one above</div>}
+      </div>
     </div>
   )
 }
