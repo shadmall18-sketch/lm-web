@@ -41,22 +41,29 @@ export default function JoinPage() {
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
     setSubmitting(true); setError('')
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: invite.email,
+    // Create the account server-side (no confirmation email, no rate limit)
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const res = await fetch(`${supabaseUrl}/functions/v1/create-account`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+      body: JSON.stringify({ code, displayName, password }),
+    })
+    const result = await res.json()
+
+    if (!result.success) {
+      setError(result.error ?? 'Could not create account.')
+      setSubmitting(false)
+      return
+    }
+
+    // Now sign in with the new credentials
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: result.email,
       password,
-      options: {
-        data: {
-          display_name: displayName,
-          family_id: invite.family_id,
-          role: invite.role,
-          is_child: invite.is_child,
-        },
-      },
     })
 
-    if (signUpError) { setError(signUpError.message); setSubmitting(false); return }
-
-    await supabase.from('user_invites').update({ accepted_at: new Date().toISOString() }).eq('code', code)
+    if (signInError) { setError(signInError.message); setSubmitting(false); return }
     router.push('/dashboard')
   }
 
