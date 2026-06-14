@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import InstallPrompt from './InstallPrompt'
 
 const NAV = [
   { href: '/dashboard', label: 'Home', icon: '🏠' },
@@ -188,6 +189,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="w-6" />
         </div>
         {children}
+        <InstallPrompt />
       </main>
     </div>
   )
