@@ -18,6 +18,7 @@ const BLANK = {
   first_name:'', last_name:'', relationship:'', date_of_birth:'', phone:'', email:'', address:'', notes:'',
   favorite_color:'', favorite_snacks:'', favorite_foods:'', favorite_activities:'',
   favorite_with_others:'', hobbies:'', clothing_size:'', shoe_size:'', allergies:'',
+  is_private: false,
 }
 
 export default function ContactsPage() {
@@ -114,7 +115,7 @@ export default function ContactsPage() {
   const handleAdd = async () => {
     if (!form.first_name) return
     const fid = await getFamilyId()
-    await supabase.from('contacts').insert({ ...form, family_id: fid, date_of_birth: form.date_of_birth || null })
+    await supabase.from('contacts').insert({ ...form, family_id: fid, created_by: me?.id, date_of_birth: form.date_of_birth || null })
     setShowAdd(false); setShowAboutFields(false); setForm(BLANK); load()
   }
 
@@ -232,6 +233,13 @@ export default function ContactsPage() {
           )}
 
           <textarea value={form.notes} onChange={e => setForm((p:any)=>({...p,notes:e.target.value}))} placeholder="Quick note" rows={2} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1] resize-none" />
+
+          <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide pt-1">Who can see this person?</div>
+          <div className="flex gap-2">
+            <button onClick={() => setForm((p:any)=>({...p,is_private:false}))} className={`flex-1 py-2 rounded-lg text-xs font-semibold ${!form.is_private ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B]'}`}>👨‍👩‍👧 Whole family</button>
+            <button onClick={() => setForm((p:any)=>({...p,is_private:true}))} className={`flex-1 py-2 rounded-lg text-xs font-semibold ${form.is_private ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B]'}`}>🔒 Just me</button>
+          </div>
+
           <div className="flex gap-2">
             <button onClick={handleAdd} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
             <button onClick={() => { setShowAdd(false); setShowAboutFields(false); setForm(BLANK) }} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
@@ -261,6 +269,7 @@ function ContactRow({ contact, onClick }: any) {
         {contact.relationship && <div className="text-sm text-[#64748B]">{contact.relationship}</div>}
       </div>
       {contact.isMember && <span className="text-xs text-[#6366F1]">LM</span>}
+      {contact.is_private && <span className="text-xs text-[#64748B]" title="Only you can see this">🔒</span>}
       <span className="text-[#475569]">›</span>
     </button>
   )
