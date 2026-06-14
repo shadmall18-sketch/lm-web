@@ -18,13 +18,61 @@ export default function ContactsPage() {
 
   const load = async () => {
     const { data } = await supabase.from('contacts').select('*, preferences:contact_preferences(*)').order('first_name')
-    setContacts(data ?? [])
+
+    // Pull in family + network members as auto-contacts with About Me info
+    const { data: u } = await supabase.auth.getUser()
+    const { data: me } = await supabase.from('users').select('family_id').eq('id', u.user!.id).single()
+
+    // Find connected network family ids
+    const { data: nets } = await supabase.from('family_networks')
+      .select('family_id_a, family_id_b')
+      .or(`family_id_a.eq.${me?.family_id},family_id_b.eq.${me?.family_id}`)
+    const networkFamilyIds = (nets ?? []).map((n: any) =>
+      n.family_id_a === me?.family_id ? n.family_id_b : n.family_id_a
+    )
+    const allFamilyIds = [me?.family_id, ...networkFamilyIds]
+
+    // Get all members of those families + their about_me
+    const { data: members } = await supabase.from('users')
+      .select('id, display_name, family_id, is_child, family:families(name)')
+      .in('family_id', allFamilyIds)
+      .neq('id', u.user!.id)
+
+    const { data: abouts } = await supabase.from('about_me').select('*')
+    const aboutMap = new Map((abouts ?? []).map((a: any) => [a.user_id, a]))
+
+    const memberContacts = (members ?? []).map((m: any) => {
+      const about = aboutMap.get(m.id)
+      return {
+        id: `member-${m.id}`,
+        first_name: m.display_name?.split(' ')[0] ?? m.display_name,
+        last_name: m.display_name?.split(' ').slice(1).join(' ') ?? '',
+        relationship: m.family_id === me?.family_id ? 'Family' : `${(m.family as any)?.name ?? 'Network'} Family`,
+        is_family_member: m.family_id === me?.family_id,
+        isMember: true,
+        about,
+        preferences: about ? [
+          about.favorite_color && { id: 'c', label: 'Favorite Color', value: about.favorite_color },
+          about.favorite_snacks && { id: 's', label: 'Favorite Snacks', value: about.favorite_snacks },
+          about.favorite_foods && { id: 'f', label: 'Favorite Foods', value: about.favorite_foods },
+          about.favorite_activities && { id: 'a', label: 'Favorite Activities', value: about.favorite_activities },
+          about.favorite_with_others && { id: 'w', label: 'Loves Doing Together', value: about.favorite_with_others },
+          about.hobbies && { id: 'h', label: 'Hobbies', value: about.hobbies },
+          about.clothing_size && { id: 'cl', label: 'Clothing Size', value: about.clothing_size },
+          about.shoe_size && { id: 'sh', label: 'Shoe Size', value: about.shoe_size },
+          about.allergies && { id: 'al', label: 'Allergies', value: about.allergies },
+        ].filter(Boolean) : [],
+      }
+    })
+
+    setContacts([...memberContacts, ...(data ?? [])])
   }
 
   useEffect(() => { load() }, [])
 
   const handleSelect = async (c: any) => {
     setSelected(c)
+    if (c.isMember) { setGifts([]); return }
     const { data } = await supabase.from('gifts').select('*').eq('contact_id', c.id).order('created_at', { ascending: false })
     setGifts(data ?? [])
   }

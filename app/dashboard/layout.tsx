@@ -14,6 +14,7 @@ const NAV = [
   { href: '/dashboard/messages', label: 'Messages', icon: '💬' },
   { href: '/dashboard/network', label: 'Family Network', icon: '🌐' },
   { href: '/dashboard/contacts', label: 'People', icon: '👥' },
+  { href: '/dashboard/about', label: 'About Me', icon: '🪪' },
   { href: '/dashboard/grocery', label: 'Grocery', icon: '🛒' },
   { href: '/dashboard/memories', label: 'Memories', icon: '📸' },
   { href: '/dashboard/members', label: 'Members', icon: '👨‍👩‍👧' },

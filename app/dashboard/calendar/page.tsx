@@ -16,9 +16,32 @@ export default function CalendarPage() {
 
   const load = async () => {
     const y = currentMonth.getFullYear(), m = currentMonth.getMonth()
+    const fromDate = new Date(y,m,1).toISOString()
+    const toDate = new Date(y,m+1,0).toISOString()
     const { data } = await supabase.from('calendar_events')
-      .select('*').gte('start_time', new Date(y,m,1).toISOString()).lte('start_time', new Date(y,m+1,0).toISOString())
-    setEvents(data ?? [])
+      .select('*').gte('start_time', fromDate).lte('start_time', toDate)
+
+    // Pull in scheduled workouts that are marked for calendar
+    const { data: u } = await supabase.auth.getUser()
+    const { data: workouts } = await supabase.from('planned_workouts')
+      .select('*')
+      .eq('show_on_calendar', true)
+      .gte('scheduled_date', `${y}-${String(m+1).padStart(2,'0')}-01`)
+      .lte('scheduled_date', `${y}-${String(m+1).padStart(2,'0')}-31`)
+
+    // Convert workouts to event-like objects
+    const workoutEvents = (workouts ?? [])
+      .filter((w: any) => w.visibility === 'family' || w.user_id === u.user?.id)
+      .map((w: any) => ({
+        id: `workout-${w.id}`,
+        title: `💪 ${w.custom_name}`,
+        start_time: `${w.scheduled_date}T07:00:00`,
+        color: '#F59E0B',
+        location: `${w.calories} cal`,
+        isWorkout: true,
+      }))
+
+    setEvents([...(data ?? []), ...workoutEvents])
   }
 
   useEffect(() => { load() }, [currentMonth])
