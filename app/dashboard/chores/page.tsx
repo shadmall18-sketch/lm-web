@@ -1,0 +1,187 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase'
+
+export default function ChoresPage() {
+  const supabase = createClient()
+  const [user, setUser] = useState<any>(null)
+  const [chores, setChores] = useState<any[]>([])
+  const [rewards, setRewards] = useState<any[]>([])
+  const [members, setMembers] = useState<any[]>([])
+  const [tab, setTab] = useState<'chores'|'rewards'>('chores')
+  const [showAdd, setShowAdd] = useState(false)
+  const [showAddReward, setShowAddReward] = useState(false)
+  const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'' })
+  const [rewardForm, setRewardForm] = useState({ title:'', points_cost:'50', description:'' })
+
+  const load = async () => {
+    const { data: sess } = await supabase.auth.getSession()
+    if (!sess.session) return
+    const uid = sess.session.user.id
+    const [{ data: profile }, { data: c }, { data: r }, { data: m }] = await Promise.all([
+      supabase.from('users').select('*').eq('id', uid).single(),
+      supabase.from('chores').select('*, assigned_user:users!assigned_to(display_name)').order('due_date', { ascending: true }),
+      supabase.from('rewards').select('*').eq('is_active', true),
+      supabase.from('users').select('*'),
+    ])
+    setUser(profile); setChores(c ?? []); setRewards(r ?? []); setMembers(m ?? [])
+  }
+
+  useEffect(() => { load() }, [])
+
+  const getFamilyId = async () => {
+    const { data: u } = await supabase.auth.getUser()
+    const { data } = await supabase.from('users').select('family_id').eq('id', u.user!.id).single()
+    return data?.family_id
+  }
+
+  const handleComplete = async (id: string) => {
+    await supabase.from('chores').update({ status:'completed', completed_at: new Date().toISOString() }).eq('id', id)
+    load()
+  }
+
+  const handleVerify = async (chore: any) => {
+    const { data: u } = await supabase.auth.getUser()
+    await supabase.from('chores').update({ verified_by: u.user!.id }).eq('id', chore.id)
+    if (chore.points_value > 0) {
+      const fid = await getFamilyId()
+      await supabase.from('points_ledger').insert({ family_id: fid, user_id: chore.assigned_to, amount: chore.points_value, reason: `Completed: ${chore.title}`, reference_id: chore.id, reference_type: 'chore' })
+      await supabase.rpc('increment_points', { user_id: chore.assigned_to, amount: chore.points_value })
+    }
+    load()
+  }
+
+  const handleAddChore = async () => {
+    if (!form.title || !form.assigned_to) return
+    const { data: u } = await supabase.auth.getUser()
+    const fid = await getFamilyId()
+    await supabase.from('chores').insert({ title: form.title, points_value: parseInt(form.points_value)||0, assigned_to: form.assigned_to, due_date: form.due_date||null, family_id: fid, created_by: u.user!.id })
+    setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'' }); load()
+  }
+
+  const handleAddReward = async () => {
+    if (!rewardForm.title) return
+    const { data: u } = await supabase.auth.getUser()
+    const fid = await getFamilyId()
+    await supabase.from('rewards').insert({ title: rewardForm.title, description: rewardForm.description, points_cost: parseInt(rewardForm.points_cost)||50, family_id: fid, created_by: u.user!.id })
+    setShowAddReward(false); setRewardForm({ title:'', points_cost:'50', description:'' }); load()
+  }
+
+  const pending = chores.filter(c => c.status === 'pending')
+  const completed = chores.filter(c => c.status === 'completed')
+  const isAdmin = user?.role === 'admin'
+
+  return (
+    <div className="p-6 max-w-4xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-[#F1F5F9]">Chores & Rewards</h1>
+        <div className="bg-[#312E81] px-3 py-1.5 rounded-lg text-[#A5B4FC] text-sm font-bold">{user?.points_balance ?? 0} pts</div>
+      </div>
+
+      <div className="flex bg-[#1E293B] rounded-xl p-1 mb-6 border border-[#334155]">
+        {(['chores','rewards'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${tab===t ? 'bg-[#6366F1] text-white' : 'text-[#64748B]'}`}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>
+        ))}
+      </div>
+
+      {tab === 'chores' && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-[#94A3B8]">Pending ({pending.length})</h2>
+            {isAdmin && <button onClick={() => setShowAdd(!showAdd)} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-xl hover:bg-[#4F46E5]">+ Add Chore</button>}
+          </div>
+
+          {showAdd && (
+            <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-4 space-y-3">
+              <input value={form.title} onChange={e => setForm(p=>({...p,title:e.target.value}))} placeholder="Chore title" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <select value={form.assigned_to} onChange={e => setForm(p=>({...p,assigned_to:e.target.value}))} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                <option value="">Assign to...</option>
+                {members.map(m => <option key={m.id} value={m.id}>{m.display_name}</option>)}
+              </select>
+              <div className="flex gap-3">
+                <input value={form.points_value} onChange={e => setForm(p=>({...p,points_value:e.target.value}))} placeholder="Points" type="number" className="w-24 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                <input value={form.due_date} onChange={e => setForm(p=>({...p,due_date:e.target.value}))} type="date" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleAddChore} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
+                <button onClick={() => setShowAdd(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg hover:bg-[#0F172A]">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {pending.map(chore => (
+              <div key={chore.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-[#F1F5F9]">{chore.title}</div>
+                  <div className="text-sm text-[#64748B] mt-0.5">
+                    👤 {chore.assigned_user?.display_name}
+                    {chore.due_date && ` · Due ${new Date(chore.due_date).toLocaleDateString()}`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {chore.points_value > 0 && <span className="text-xs font-bold text-[#A5B4FC] bg-[#312E81] px-2 py-1 rounded-lg">+{chore.points_value}</span>}
+                  {chore.assigned_to === user?.id && !chore.completed_at && (
+                    <button onClick={() => handleComplete(chore.id)} className="bg-[#10B981] text-white text-xs font-bold px-3 py-1.5 rounded-lg">Done</button>
+                  )}
+                  {isAdmin && chore.completed_at && !chore.verified_by && (
+                    <button onClick={() => handleVerify(chore)} className="bg-[#F59E0B] text-white text-xs font-bold px-3 py-1.5 rounded-lg">Verify ✓</button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {pending.length === 0 && <div className="text-[#475569] text-sm italic p-4 bg-[#1E293B] rounded-xl border border-[#334155]">No pending chores 🎉</div>}
+          </div>
+
+          {completed.length > 0 && (
+            <div className="mt-6">
+              <h2 className="font-bold text-[#94A3B8] mb-3">Completed ({completed.length})</h2>
+              <div className="space-y-2">
+                {completed.map(c => (
+                  <div key={c.id} className="bg-[#1E293B]/50 border border-[#334155]/50 rounded-xl p-4 flex items-center justify-between opacity-60">
+                    <div className="font-semibold text-[#64748B]">✅ {c.title}</div>
+                    <span className="text-xs font-bold text-[#A5B4FC]">+{c.points_value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'rewards' && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-[#94A3B8]">Rewards</h2>
+            {isAdmin && <button onClick={() => setShowAddReward(!showAddReward)} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-xl hover:bg-[#4F46E5]">+ Add Reward</button>}
+          </div>
+
+          {showAddReward && (
+            <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-4 space-y-3">
+              <input value={rewardForm.title} onChange={e => setRewardForm(p=>({...p,title:e.target.value}))} placeholder="Reward title" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <input value={rewardForm.description} onChange={e => setRewardForm(p=>({...p,description:e.target.value}))} placeholder="Description (optional)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <input value={rewardForm.points_cost} onChange={e => setRewardForm(p=>({...p,points_cost:e.target.value}))} placeholder="Points cost" type="number" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <div className="flex gap-2">
+                <button onClick={handleAddReward} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
+                <button onClick={() => setShowAddReward(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {rewards.map(r => (
+              <div key={r.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div className="font-semibold text-[#F1F5F9]">{r.title}</div>
+                  {r.description && <div className="text-sm text-[#64748B] mt-0.5">{r.description}</div>}
+                </div>
+                <span className="text-sm font-bold text-[#A5B4FC] bg-[#312E81] px-3 py-1.5 rounded-lg">{r.points_cost} pts</span>
+              </div>
+            ))}
+            {rewards.length === 0 && <div className="text-[#475569] text-sm italic p-4 bg-[#1E293B] rounded-xl border border-[#334155]">No rewards set up yet</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
