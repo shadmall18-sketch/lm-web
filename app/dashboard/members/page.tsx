@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase'
 export default function MembersPage() {
   const supabase = createClient()
   const [user, setUser] = useState<any>(null)
+  const [family, setFamily] = useState<any>(null)
   const [members, setMembers] = useState<any[]>([])
   const [invites, setInvites] = useState<any[]>([])
   const [tab, setTab] = useState<'members' | 'invite'>('members')
@@ -14,6 +15,7 @@ export default function MembersPage() {
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
   const [inviteLink, setInviteLink] = useState('')
+  const [emailSent, setEmailSent] = useState('')
 
   const getFamilyId = async () => {
     const { data: u } = await supabase.auth.getUser()
@@ -24,8 +26,9 @@ export default function MembersPage() {
   const load = async () => {
     const { data: sess } = await supabase.auth.getSession()
     if (!sess.session) return
-    const { data: profile } = await supabase.from('users').select('*').eq('id', sess.session.user.id).single()
+    const { data: profile } = await supabase.from('users').select('*, family:families(*)').eq('id', sess.session.user.id).single()
     setUser(profile)
+    setFamily(profile?.family)
     const [{ data: m }, { data: i }] = await Promise.all([
       supabase.from('users').select('*').order('is_child').order('display_name'),
       supabase.from('user_invites').select('*').order('created_at', { ascending: false }),
@@ -39,6 +42,7 @@ export default function MembersPage() {
   const handleInvite = async () => {
     if (!inviteEmail) return
     setSending(true)
+    setInviteLink(''); setEmailSent('')
     try {
       const { data: u } = await supabase.auth.getUser()
       const fid = await getFamilyId()
@@ -51,7 +55,28 @@ export default function MembersPage() {
         is_child: isChild,
         code,
       })
-      setInviteLink(`${window.location.origin}/join/${code}`)
+
+      // Send the invite email directly
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      const res = await fetch(`${supabaseUrl}/functions/v1/send-invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+        body: JSON.stringify({
+          email: inviteEmail,
+          code,
+          familyName: family?.name ?? 'our family',
+          origin: window.location.origin,
+        }),
+      })
+      const result = await res.json()
+
+      if (result.success) {
+        setEmailSent(inviteEmail)
+      } else {
+        // Fall back to showing the link if email fails
+        setInviteLink(`${window.location.origin}/join/${code}`)
+      }
       setSent(true)
       setInviteEmail('')
       load()
@@ -152,10 +177,17 @@ export default function MembersPage() {
             </button>
           </div>
 
+          {sent && emailSent && (
+            <div className="bg-[#1E3A2F] border border-[#10B981]/30 rounded-xl p-5">
+              <div className="font-bold text-[#10B981] mb-2">✅ Invite sent!</div>
+              <div className="text-sm text-[#94A3B8]">We emailed an invite to <span className="text-[#F1F5F9] font-semibold">{emailSent}</span>. They'll get a link to create their account and join {family?.name}. The invite expires in 7 days.</div>
+            </div>
+          )}
+
           {sent && inviteLink && (
             <div className="bg-[#1E3A2F] border border-[#10B981]/30 rounded-xl p-5">
               <div className="font-bold text-[#10B981] mb-2">✅ Invite link ready!</div>
-              <div className="text-sm text-[#94A3B8] mb-3">Share this link with them — it expires in 7 days.</div>
+              <div className="text-sm text-[#94A3B8] mb-3">We couldn't auto-send the email, so share this link with them directly — it expires in 7 days.</div>
               <div className="bg-[#0F172A] border border-[#334155] rounded-lg px-4 py-3 text-[#F1F5F9] text-sm font-mono break-all">{inviteLink}</div>
               <button
                 onClick={() => navigator.clipboard.writeText(inviteLink)}
