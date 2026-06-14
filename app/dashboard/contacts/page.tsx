@@ -27,6 +27,7 @@ export default function ContactsPage() {
   const [gifts, setGifts] = useState<any[]>([])
   const [notes, setNotes] = useState<any[]>([])
   const [newNote, setNewNote] = useState('')
+  const [notePrivate, setNotePrivate] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showAboutFields, setShowAboutFields] = useState(false)
   const [form, setForm] = useState<any>(BLANK)
@@ -99,7 +100,7 @@ export default function ContactsPage() {
     if (!newNote.trim()) return
     const fid = await getFamilyId()
     await supabase.from('person_notes').insert({
-      family_id: fid, author_id: me.id, person_key: selected.person_key, note: newNote.trim(),
+      family_id: fid, author_id: me.id, person_key: selected.person_key, note: newNote.trim(), is_private: notePrivate,
     })
     setNewNote('')
     handleSelect(selected)
@@ -161,18 +162,24 @@ export default function ContactsPage() {
         {/* Notes — anyone in family can add about this person */}
         <div className="mb-6">
           <h2 className="text-sm font-bold text-[#64748B] uppercase tracking-wide mb-3">Notes</h2>
-          <div className="flex gap-2 mb-3">
+          <div className="flex gap-2 mb-2">
             <input value={newNote} onChange={e => setNewNote(e.target.value)} onKeyDown={e => e.key==='Enter' && addNote()} placeholder={`Add a note about ${selected.first_name}...`} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
             <button onClick={addNote} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">Add</button>
           </div>
+          <div className="flex gap-2 mb-3">
+            <button onClick={() => setNotePrivate(false)} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${!notePrivate ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B]'}`}>👨‍👩‍👧 Shared with family</button>
+            <button onClick={() => setNotePrivate(true)} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${notePrivate ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B]'}`}>🔒 Just me</button>
+          </div>
           <div className="space-y-2">
             {notes.map(n => (
-              <div key={n.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-3">
+              <div key={n.id} className={`border rounded-xl p-3 ${n.is_private ? 'bg-[#1E1B4B]/40 border-[#6366F1]/30' : 'bg-[#1E293B] border-[#334155]'}`}>
                 <div className="flex justify-between items-start">
                   <span className="text-[#F1F5F9] text-sm">{n.note}</span>
                   {n.author_id === me?.id && <button onClick={() => deleteNote(n.id)} className="text-[#64748B] hover:text-red-400 text-xs ml-2">✕</button>}
                 </div>
-                <div className="text-xs text-[#475569] mt-1">— {n.author?.display_name} · {new Date(n.created_at).toLocaleDateString()}</div>
+                <div className="text-xs text-[#475569] mt-1">
+                  {n.is_private ? '🔒 Private · ' : ''}— {n.author?.display_name} · {new Date(n.created_at).toLocaleDateString()}
+                </div>
               </div>
             ))}
             {notes.length === 0 && <div className="text-[#475569] italic text-sm">No notes yet</div>}
