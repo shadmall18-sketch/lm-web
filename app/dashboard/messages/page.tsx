@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { subscribeToPush, getPushStatus } from '@/lib/push'
 
 export default function MessagesPage() {
   const supabase = createClient()
@@ -9,7 +10,21 @@ export default function MessagesPage() {
   const [family, setFamily] = useState<any>(null)
   const [text, setText] = useState('')
   const [type, setType] = useState<'chat'|'announcement'|'emergency'>('chat')
+  const [pushStatus, setPushStatus] = useState<string>('default')
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { getPushStatus().then(setPushStatus) }, [])
+
+  const enablePush = async () => {
+    try {
+      await subscribeToPush()
+      setPushStatus('granted')
+    } catch (e: any) {
+      alert(e.message === 'Push not supported on this device'
+        ? 'To get notifications on iPhone, first add this app to your home screen (Share → Add to Home Screen), then open it from there and try again.'
+        : 'Could not enable notifications: ' + e.message)
+    }
+  }
 
   const load = async () => {
     const { data: sess } = await supabase.auth.getSession()
@@ -61,8 +76,22 @@ export default function MessagesPage() {
     if (!text.trim()) return
     const content = text.trim(); setText('')
     const { data: u } = await supabase.auth.getUser()
-    const { data: profile } = await supabase.from('users').select('family_id').eq('id', u.user!.id).single()
+    const { data: profile } = await supabase.from('users').select('family_id, display_name').eq('id', u.user!.id).single()
     await supabase.from('messages').insert({ family_id: profile?.family_id, sent_by: u.user!.id, type, content })
+
+    // Fire push notification to the rest of the family
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    fetch(`${supabaseUrl}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+      body: JSON.stringify({
+        familyId: profile?.family_id,
+        senderId: u.user!.id,
+        senderName: profile?.display_name ?? 'Family',
+        content, type,
+      }),
+    }).catch(() => {})
   }
 
   const typeColor = (t: string) => t==='emergency'?'#EF4444':t==='announcement'?'#F59E0B':'#6366F1'
@@ -71,7 +100,12 @@ export default function MessagesPage() {
     <div className="flex flex-col h-[calc(100vh-64px)] md:h-screen p-4 max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-[#F1F5F9]">Family Chat</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {pushStatus !== 'granted' && pushStatus !== 'unsupported' && (
+            <button onClick={enablePush} title="Enable notifications" className="text-xs font-semibold text-[#6366F1] bg-[#1E1B4B] px-3 py-1.5 rounded-full hover:bg-[#312E81]">
+              🔔 Notify me
+            </button>
+          )}
           {(['chat','announcement','emergency'] as const).map(t => (
             <button key={t} onClick={() => setType(t)} className="w-9 h-9 rounded-full flex items-center justify-center text-lg transition-all" style={{backgroundColor: type===t ? typeColor(t) : '#1E293B'}}>
               {t==='chat'?'💬':t==='announcement'?'📢':'🚨'}

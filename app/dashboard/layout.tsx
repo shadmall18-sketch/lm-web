@@ -27,7 +27,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [family, setFamily] = useState<any>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [unread, setUnread] = useState(0)
   const supabase = createClient()
+
+  const checkUnread = async (familyId: string, userId: string) => {
+    const { data: read } = await supabase.from('message_reads').select('last_read_at').eq('user_id', userId).single()
+    const lastRead = read?.last_read_at ?? '1970-01-01'
+    const { count } = await supabase
+      .from('messages')
+      .select('id', { count: 'exact', head: true })
+      .eq('family_id', familyId)
+      .gt('created_at', lastRead)
+      .neq('sent_by', userId)
+    setUnread(count ?? 0)
+  }
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data }) => {
@@ -35,8 +48,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const { data: profile } = await supabase.from('users').select('*, family:families(*)').eq('id', data.session.user.id).single()
       setUser(profile)
       setFamily(profile?.family)
+      if (profile?.family_id) checkUnread(profile.family_id, data.session.user.id)
     })
   }, [])
+
+  // Clear unread when viewing messages; re-check on nav
+  useEffect(() => {
+    if (!user?.family_id) return
+    if (pathname === '/dashboard/messages') {
+      supabase.from('message_reads').upsert({ user_id: user.id, last_read_at: new Date().toISOString() }, { onConflict: 'user_id' }).then(() => setUnread(0))
+    } else {
+      checkUnread(user.family_id, user.id)
+    }
+  }, [pathname, user?.family_id])
+
+  // Realtime: bump unread on new messages from others
+  useEffect(() => {
+    if (!family?.id || !user?.id) return
+    const channel = supabase.channel(`nav-msgs:${family.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `family_id=eq.${family.id}` }, (payload: any) => {
+        if (payload.new.sent_by !== user.id && pathname !== '/dashboard/messages') {
+          setUnread(u => u + 1)
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [family?.id, user?.id, pathname])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -89,8 +126,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   : 'text-[#64748B] hover:bg-[#1E293B] hover:text-[#F1F5F9]'
                 }`}
             >
-              <span className={collapsed ? 'text-xl' : 'text-base flex-shrink-0'}>{item.icon}</span>
-              {!collapsed && item.label}
+              <span className={collapsed ? 'text-xl relative' : 'text-base flex-shrink-0 relative'}>
+                {item.icon}
+                {item.href === '/dashboard/messages' && unread > 0 && (
+                  <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+                    {unread > 9 ? '9+' : unread}
+                  </span>
+                )}
+              </span>
+              {!collapsed && (
+                <span className="flex-1 flex items-center justify-between">
+                  {item.label}
+                  {item.href === '/dashboard/messages' && unread > 0 && (
+                    <span className="bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                      {unread > 9 ? '9+' : unread}
+                    </span>
+                  )}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
