@@ -33,6 +33,8 @@ export default function FitnessPage() {
   const [recurDays, setRecurDays] = useState<number[]>([])
   const [recurEnd, setRecurEnd] = useState('')
   const [blockLabel, setBlockLabel] = useState('Workout')
+  const [workoutPoints, setWorkoutPoints] = useState('0')
+  const [members, setMembers] = useState<any[]>([])
 
   // visibility prompt
   const [pendingExercise, setPendingExercise] = useState<any>(null)
@@ -53,16 +55,18 @@ export default function FitnessPage() {
     const fid = await getFamilyId()
     setFamilyId(fid)
 
-    const [{ data: e }, { data: p }, { data: m }, { data: fav }] = await Promise.all([
+    const [{ data: e }, { data: p }, { data: m }, { data: fav }, { data: mem }] = await Promise.all([
       supabase.from('exercise_library').select('*').order('category').order('name'),
       supabase.from('planned_workouts').select('*').eq('user_id', userId).eq('scheduled_date', date).order('scheduled_time'),
       supabase.from('planned_meals').select('*').eq('user_id', userId).eq('planned_date', date),
       supabase.from('favorites').select('item_id').eq('user_id', userId).eq('item_type', 'exercise'),
+      supabase.from('users').select('id, is_child, role').eq('id', userId).single(),
     ])
     setExercises(e ?? [])
     setPlanned(p ?? [])
     setMeals(m ?? [])
     setFavorites((fav ?? []).map((x: any) => x.item_id))
+    setMembers(mem ? [mem] : [])
   }
 
   useEffect(() => { load() }, [date])
@@ -143,6 +147,7 @@ export default function FitnessPage() {
       custom_name: ex.name, calories: ex.calories,
       scheduled_date: d, scheduled_time: schedTime || null,
       visibility, show_on_calendar: true,
+      points_value: parseInt(workoutPoints) || 0,
       recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
       recurrence_end: recurEnd || null, series_id: sid,
     }))
@@ -159,6 +164,7 @@ export default function FitnessPage() {
       custom_name: blockLabel || 'Workout', calories: null,
       scheduled_date: d, scheduled_time: schedTime || null,
       is_time_block: true, visibility: 'private', show_on_calendar: true,
+      points_value: parseInt(workoutPoints) || 0,
       recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
       recurrence_end: recurEnd || null, series_id: sid,
     }))
@@ -177,15 +183,63 @@ export default function FitnessPage() {
 
   const resetPanel = () => {
     setShowAdd(false); setSearch(''); setCustomName(''); setCustomCals('')
-    setRecurrence('none'); setRecurDays([]); setRecurEnd(''); setBlockLabel('Workout')
+    setRecurrence('none'); setRecurDays([]); setRecurEnd(''); setBlockLabel('Workout'); setWorkoutPoints('0')
+  }
+
+  const awardWorkoutPoints = async (w: any, missed: boolean) => {
+    if (!w.points_value) return
+    const isKid = members[0]?.is_child
+    const fid = familyId
+    if (missed) {
+      const penalty = Math.round(w.points_value / 2)
+      if (isKid) {
+        await supabase.from('planned_workouts').update({ points_status: 'pending_penalty' }).eq('id', w.id)
+      } else {
+        await supabase.from('planned_workouts').update({ points_status: 'penalized' }).eq('id', w.id)
+        await supabase.from('points_ledger').insert({ family_id: fid, user_id: uid, amount: -penalty, reason: `Missed workout: ${w.custom_name}`, reference_id: w.id, reference_type: 'workout' })
+        await supabase.rpc('increment_points', { user_id: uid, amount: -penalty })
+      }
+    } else {
+      if (isKid) {
+        await supabase.from('planned_workouts').update({ points_status: 'pending_verify' }).eq('id', w.id)
+      } else {
+        await supabase.from('planned_workouts').update({ points_status: 'awarded' }).eq('id', w.id)
+        await supabase.from('points_ledger').insert({ family_id: fid, user_id: uid, amount: w.points_value, reason: `Workout: ${w.custom_name}`, reference_id: w.id, reference_type: 'workout' })
+        await supabase.rpc('increment_points', { user_id: uid, amount: w.points_value })
+      }
+    }
   }
 
   const toggleComplete = async (w: any) => {
-    if (w.is_time_block) { setFillBlock(w); return } // filling a block = completing it
+    if (w.is_time_block) { setFillBlock(w); return }
+    const nowComplete = !w.completed
     await supabase.from('planned_workouts').update({
-      completed: !w.completed,
-      completed_at: !w.completed ? new Date().toISOString() : null,
+      completed: nowComplete,
+      completed_at: nowComplete ? new Date().toISOString() : null,
     }).eq('id', w.id)
+    if (nowComplete && w.points_status === 'none') await awardWorkoutPoints(w, false)
+    load()
+  }
+
+  const markMissed = async (w: any) => {
+    await supabase.from('planned_workouts').update({ completed: false, completed_at: null }).eq('id', w.id)
+    if (w.points_status === 'none') await awardWorkoutPoints(w, true)
+    load()
+  }
+
+  // Parent verifies a kid's workout points
+  const verifyWorkout = async (w: any) => {
+    const fid = familyId
+    if (w.points_status === 'pending_penalty') {
+      const penalty = Math.round(w.points_value / 2)
+      await supabase.from('planned_workouts').update({ points_status: 'penalized' }).eq('id', w.id)
+      await supabase.from('points_ledger').insert({ family_id: fid, user_id: w.user_id, amount: -penalty, reason: `Missed workout: ${w.custom_name}`, reference_id: w.id, reference_type: 'workout' })
+      await supabase.rpc('increment_points', { user_id: w.user_id, amount: -penalty })
+    } else {
+      await supabase.from('planned_workouts').update({ points_status: 'awarded' }).eq('id', w.id)
+      await supabase.from('points_ledger').insert({ family_id: fid, user_id: w.user_id, amount: w.points_value, reason: `Workout: ${w.custom_name}`, reference_id: w.id, reference_type: 'workout' })
+      await supabase.rpc('increment_points', { user_id: w.user_id, amount: w.points_value })
+    }
     load()
   }
 
@@ -285,6 +339,11 @@ export default function FitnessPage() {
                   <span className="text-xs text-[#475569]">(blank = 60 days)</span>
                 </div>
               )}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#94A3B8] w-16">Points</span>
+                <input type="number" value={workoutPoints} onChange={e => setWorkoutPoints(e.target.value)} placeholder="0" className="w-24 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                {parseInt(workoutPoints) > 0 && <span className="text-xs text-[#475569]">+{workoutPoints} done · −{Math.round(parseInt(workoutPoints)/2)} missed</span>}
+              </div>
             </div>
           )}
 
@@ -370,6 +429,14 @@ export default function FitnessPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              {w.points_value > 0 && w.points_status === 'none' && <span className="text-xs font-bold text-[#A5B4FC] bg-[#312E81] px-2 py-0.5 rounded">+{w.points_value}/−{Math.round(w.points_value/2)}</span>}
+              {w.points_status === 'awarded' && <span className="text-xs font-bold text-[#10B981]">+{w.points_value} ✓</span>}
+              {w.points_status === 'penalized' && <span className="text-xs font-bold text-red-400">−{Math.round(w.points_value/2)}</span>}
+              {w.points_status === 'pending_verify' && (members[0]?.role === 'admin' ? <button onClick={() => verifyWorkout(w)} className="bg-[#F59E0B] text-white text-xs font-bold px-2 py-1 rounded">Verify ✓</button> : <span className="text-xs text-[#F59E0B]">Pending</span>)}
+              {w.points_status === 'pending_penalty' && (members[0]?.role === 'admin' ? <button onClick={() => verifyWorkout(w)} className="bg-red-500/80 text-white text-xs font-bold px-2 py-1 rounded">Confirm</button> : <span className="text-xs text-red-400">Pending</span>)}
+              {!w.completed && !w.is_time_block && w.points_value > 0 && w.points_status === 'none' && (
+                <button onClick={() => markMissed(w)} className="text-red-400 border border-red-500/40 text-xs font-bold px-2 py-1 rounded">Missed</button>
+              )}
               {w.calories != null && <span className="text-sm font-bold text-[#F59E0B]">{w.calories} cal</span>}
               <button onClick={() => removeWorkout(w)} className="text-[#64748B] hover:text-red-400 text-sm">✕</button>
             </div>

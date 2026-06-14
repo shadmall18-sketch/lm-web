@@ -35,18 +35,57 @@ export default function ChoresPage() {
     return data?.family_id
   }
 
-  const handleComplete = async (id: string) => {
-    await supabase.from('chores').update({ status:'completed', completed_at: new Date().toISOString() }).eq('id', id)
+  const handleComplete = async (chore: any) => {
+    // Adults self-mark and get points immediately; kids go to pending verify
+    const assignee = members.find(m => m.id === chore.assigned_to)
+    const isKid = assignee?.is_child
+    if (isKid) {
+      await supabase.from('chores').update({ status:'completed', completed_at: new Date().toISOString(), points_status: 'pending_verify' }).eq('id', chore.id)
+    } else {
+      await supabase.from('chores').update({ status:'completed', completed_at: new Date().toISOString(), points_status: 'awarded' }).eq('id', chore.id)
+      if (chore.points_value > 0) {
+        const fid = await getFamilyId()
+        await supabase.from('points_ledger').insert({ family_id: fid, user_id: chore.assigned_to, amount: chore.points_value, reason: `Completed: ${chore.title}`, reference_id: chore.id, reference_type: 'chore' })
+        await supabase.rpc('increment_points', { user_id: chore.assigned_to, amount: chore.points_value })
+      }
+    }
+    load()
+  }
+
+  const handleMissed = async (chore: any) => {
+    const penalty = Math.round((chore.points_value || 0) / 2)
+    const assignee = members.find(m => m.id === chore.assigned_to)
+    const isKid = assignee?.is_child
+    // Kids' penalties also need a parent to confirm; adults self-report
+    if (isKid) {
+      await supabase.from('chores').update({ status:'completed', completed_at: new Date().toISOString(), points_status: 'pending_penalty' }).eq('id', chore.id)
+    } else {
+      await supabase.from('chores').update({ status:'completed', completed_at: new Date().toISOString(), points_status: 'penalized' }).eq('id', chore.id)
+      if (penalty > 0) {
+        const fid = await getFamilyId()
+        await supabase.from('points_ledger').insert({ family_id: fid, user_id: chore.assigned_to, amount: -penalty, reason: `Missed: ${chore.title}`, reference_id: chore.id, reference_type: 'chore' })
+        await supabase.rpc('increment_points', { user_id: chore.assigned_to, amount: -penalty })
+      }
+    }
     load()
   }
 
   const handleVerify = async (chore: any) => {
     const { data: u } = await supabase.auth.getUser()
-    await supabase.from('chores').update({ verified_by: u.user!.id }).eq('id', chore.id)
-    if (chore.points_value > 0) {
-      const fid = await getFamilyId()
-      await supabase.from('points_ledger').insert({ family_id: fid, user_id: chore.assigned_to, amount: chore.points_value, reason: `Completed: ${chore.title}`, reference_id: chore.id, reference_type: 'chore' })
-      await supabase.rpc('increment_points', { user_id: chore.assigned_to, amount: chore.points_value })
+    const fid = await getFamilyId()
+    if (chore.points_status === 'pending_penalty') {
+      const penalty = Math.round((chore.points_value || 0) / 2)
+      await supabase.from('chores').update({ verified_by: u.user!.id, points_status: 'penalized' }).eq('id', chore.id)
+      if (penalty > 0) {
+        await supabase.from('points_ledger').insert({ family_id: fid, user_id: chore.assigned_to, amount: -penalty, reason: `Missed: ${chore.title}`, reference_id: chore.id, reference_type: 'chore' })
+        await supabase.rpc('increment_points', { user_id: chore.assigned_to, amount: -penalty })
+      }
+    } else {
+      await supabase.from('chores').update({ verified_by: u.user!.id, points_status: 'awarded' }).eq('id', chore.id)
+      if (chore.points_value > 0) {
+        await supabase.from('points_ledger').insert({ family_id: fid, user_id: chore.assigned_to, amount: chore.points_value, reason: `Completed: ${chore.title}`, reference_id: chore.id, reference_type: 'chore' })
+        await supabase.rpc('increment_points', { user_id: chore.assigned_to, amount: chore.points_value })
+      }
     }
     load()
   }
@@ -120,12 +159,22 @@ export default function ChoresPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {chore.points_value > 0 && <span className="text-xs font-bold text-[#A5B4FC] bg-[#312E81] px-2 py-1 rounded-lg">+{chore.points_value}</span>}
+                  {chore.points_value > 0 && <span className="text-xs font-bold text-[#A5B4FC] bg-[#312E81] px-2 py-1 rounded-lg">+{chore.points_value} / −{Math.round(chore.points_value/2)}</span>}
                   {chore.assigned_to === user?.id && !chore.completed_at && (
-                    <button onClick={() => handleComplete(chore.id)} className="bg-[#10B981] text-white text-xs font-bold px-3 py-1.5 rounded-lg">Done</button>
+                    <>
+                      <button onClick={() => handleComplete(chore)} className="bg-[#10B981] text-white text-xs font-bold px-3 py-1.5 rounded-lg">Done</button>
+                      <button onClick={() => handleMissed(chore)} className="bg-[#1E293B] border border-red-500/40 text-red-400 text-xs font-bold px-3 py-1.5 rounded-lg">Missed</button>
+                    </>
                   )}
-                  {isAdmin && chore.completed_at && !chore.verified_by && (
-                    <button onClick={() => handleVerify(chore)} className="bg-[#F59E0B] text-white text-xs font-bold px-3 py-1.5 rounded-lg">Verify ✓</button>
+                  {chore.completed_at && chore.points_status === 'pending_verify' && (
+                    isAdmin
+                      ? <button onClick={() => handleVerify(chore)} className="bg-[#F59E0B] text-white text-xs font-bold px-3 py-1.5 rounded-lg">Verify ✓</button>
+                      : <span className="text-xs font-semibold text-[#F59E0B]">Awaiting verify</span>
+                  )}
+                  {chore.completed_at && chore.points_status === 'pending_penalty' && (
+                    isAdmin
+                      ? <button onClick={() => handleVerify(chore)} className="bg-red-500/80 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Confirm miss</button>
+                      : <span className="text-xs font-semibold text-red-400">Awaiting review</span>
                   )}
                 </div>
               </div>
