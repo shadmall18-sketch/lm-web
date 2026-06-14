@@ -47,7 +47,7 @@ export default function Home() {
     setError('')
     setSubmitting(true)
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: 'https://lm-web-two.vercel.app/reset-password',
     })
     if (error) { setError(error.message) }
     else { setResetSent(true) }
