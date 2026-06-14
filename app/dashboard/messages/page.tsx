@@ -16,8 +16,32 @@ export default function MessagesPage() {
     if (!sess.session) return
     const { data: profile } = await supabase.from('users').select('*, family:families(*)').eq('id', sess.session.user.id).single()
     setUser(profile); setFamily(profile?.family)
-    const { data: msgs } = await supabase.from('messages').select('*, sender:users!sent_by(display_name)').order('created_at').limit(50)
-    setMessages(msgs ?? [])
+
+    if (!profile?.family_id) return
+
+    // Load messages explicitly filtered by family
+    const { data: msgs, error } = await supabase
+      .from('messages')
+      .select('*, sender:users!messages_sent_by_fkey(display_name)')
+      .eq('family_id', profile.family_id)
+      .order('created_at')
+      .limit(50)
+
+    if (error) {
+      // Fallback: load without the join if the relationship lookup fails
+      const { data: plain } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('family_id', profile.family_id)
+        .order('created_at')
+        .limit(50)
+      // Attach sender names manually
+      const { data: members } = await supabase.from('users').select('id, display_name').eq('family_id', profile.family_id)
+      const nameMap = new Map((members ?? []).map((m: any) => [m.id, m.display_name]))
+      setMessages((plain ?? []).map((m: any) => ({ ...m, sender: { display_name: nameMap.get(m.sent_by) } })))
+    } else {
+      setMessages(msgs ?? [])
+    }
     setTimeout(() => bottomRef.current?.scrollIntoView(), 100)
   }
 
