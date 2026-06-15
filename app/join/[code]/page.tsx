@@ -19,17 +19,21 @@ export default function JoinPage() {
 
   useEffect(() => {
     const checkInvite = async () => {
-      const { data } = await supabase
-        .from('user_invites')
-        .select('*, family:families(name)')
-        .eq('code', code)
-        .is('accepted_at', null)
-        .gt('expires_at', new Date().toISOString())
-        .single()
-
-      if (data) {
-        setInvite(data)
-        setFamilyName(data.family?.name ?? 'the family')
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      try {
+        const res = await fetch(`${supabaseUrl}/functions/v1/lookup-invite`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+          body: JSON.stringify({ code }),
+        })
+        const result = await res.json()
+        if (result.valid) {
+          setInvite({ email: result.email })
+          setFamilyName(result.familyName)
+        }
+      } catch (e) {
+        console.error(e)
       }
       setLoading(false)
     }

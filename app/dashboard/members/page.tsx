@@ -30,8 +30,8 @@ export default function MembersPage() {
     setUser(profile)
     setFamily(profile?.family)
     const [{ data: m }, { data: i }] = await Promise.all([
-      supabase.from('users').select('*').order('is_child').order('display_name'),
-      supabase.from('user_invites').select('*').order('created_at', { ascending: false }),
+      supabase.from('users').select('*').eq('family_id', profile?.family_id).order('is_child').order('display_name'),
+      supabase.from('user_invites').select('*').eq('family_id', profile?.family_id).is('accepted_at', null).order('created_at', { ascending: false }),
     ])
     setMembers(m ?? [])
     setInvites(i ?? [])
