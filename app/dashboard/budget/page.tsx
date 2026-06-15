@@ -7,6 +7,7 @@ const MONTH = new Date().toISOString().slice(0,7)
 // times per year + per month for each frequency
 const FREQ: Record<string, { perYear: number; label: string }> = {
   weekly: { perYear: 52, label: 'Weekly' },
+  biweekly: { perYear: 26, label: 'Bi-weekly (every 2 weeks)' },
   monthly: { perYear: 12, label: 'Monthly' },
   yearly: { perYear: 1, label: 'Yearly' },
 }
