@@ -94,6 +94,19 @@ export default function MembersPage() {
 
   const isAdmin = user?.role === 'admin'
 
+  const changeRole = async (member: any, newRole: 'admin'|'member') => {
+    // Prevent removing the last admin
+    if (member.role === 'admin' && newRole === 'member') {
+      const adminCount = members.filter(m => m.role === 'admin' && !m.is_child).length
+      if (adminCount <= 1) {
+        alert('You need at least one admin. Promote someone else first.')
+        return
+      }
+    }
+    await supabase.from('users').update({ role: newRole }).eq('id', member.id)
+    load()
+  }
+
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold text-[#F1F5F9] mb-6">Family Members</h1>
@@ -115,10 +128,16 @@ export default function MembersPage() {
                 <div className="text-sm text-[#64748B]">{m.email}</div>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <span className={`text-xs font-bold px-2 py-1 rounded-lg ${m.is_child ? 'bg-[#2E1B5E] text-[#C4B5FD]' : 'bg-[#312E81] text-[#A5B4FC]'}`}>
-                  {m.is_child ? 'Child' : 'Adult'}
+                <span className={`text-xs font-bold px-2 py-1 rounded-lg ${m.is_child ? 'bg-[#2E1B5E] text-[#C4B5FD]' : m.role==='admin' ? 'bg-[#312E81] text-[#A5B4FC]' : 'bg-[#1E293B] text-[#94A3B8] border border-[#334155]'}`}>
+                  {m.is_child ? 'Child' : m.role === 'admin' ? '👑 Admin' : 'Member'}
                 </span>
                 <span className="text-xs font-bold text-[#6366F1]">{m.points_balance} pts</span>
+                {/* Admins can change another adult's role */}
+                {isAdmin && !m.is_child && m.id !== user?.id && (
+                  m.role === 'admin'
+                    ? <button onClick={() => changeRole(m, 'member')} className="text-xs text-[#64748B] hover:text-[#F1F5F9] underline">Make member</button>
+                    : <button onClick={() => changeRole(m, 'admin')} className="text-xs text-[#6366F1] hover:text-[#A5B4FC] underline">Make admin</button>
+                )}
               </div>
             </div>
           ))}
@@ -161,11 +180,22 @@ export default function MembersPage() {
             <div>
               <label className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide block mb-2">Type</label>
               <div className="flex gap-2">
-                <button onClick={() => { setInviteRole('admin'); setIsChild(false) }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${!isChild ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Adult</button>
-                <button onClick={() => { setInviteRole('member'); setIsChild(true) }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${isChild ? 'bg-[#7C3AED] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Child</button>
+                <button onClick={() => setIsChild(false)} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${!isChild ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Adult</button>
+                <button onClick={() => { setIsChild(true); setInviteRole('member') }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${isChild ? 'bg-[#7C3AED] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Child</button>
               </div>
-              <p className="text-xs text-[#475569] mt-2">{isChild ? 'Kids can earn points and need a parent to verify chores and workouts.' : 'Adults have full control of the family.'}</p>
+              <p className="text-xs text-[#475569] mt-2">{isChild ? 'Kids can earn points and need a parent to verify chores and workouts.' : 'Adults participate fully. Choose their access below.'}</p>
             </div>
+
+            {!isChild && (
+              <div>
+                <label className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide block mb-2">Access level</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setInviteRole('admin')} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${inviteRole==='admin' ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>👑 Admin</button>
+                  <button onClick={() => setInviteRole('member')} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${inviteRole==='member' ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Member</button>
+                </div>
+                <p className="text-xs text-[#475569] mt-2">{inviteRole==='admin' ? 'Full control — manage chores, rewards, verify kids, invite people.' : 'Participates fully but can\'t manage the family setup.'}</p>
+              </div>
+            )}
 
             <button
               onClick={handleInvite}
