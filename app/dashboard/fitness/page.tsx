@@ -321,7 +321,6 @@ export default function FitnessPage() {
                   <option value="daily">Daily</option>
                   <option value="every_other_day">Every other day</option>
                   <option value="weekly">Weekly (same weekday)</option>
-                  <option value="every_other_week">Every other week</option>
                   <option value="custom_days">Specific days of week</option>
                 </select>
               </div>
