@@ -36,20 +36,42 @@ export default function CalendarPage() {
         id: `workout-${w.id}`,
         title: `💪 ${w.custom_name}`,
         start_time: `${w.scheduled_date}T${w.scheduled_time ?? '07:00:00'}`,
+        date_key: w.scheduled_date, // YYYY-MM-DD for reliable matching
         color: w.is_time_block ? '#A5B4FC' : '#F59E0B',
         location: w.calories != null ? `${w.calories} cal` : 'Tap to fill in',
         isWorkout: true,
       }))
 
-    setEvents([...(data ?? []), ...workoutEvents])
+    // Add date_key to calendar events too
+    const calEvents = (data ?? []).map((e: any) => ({
+      ...e,
+      date_key: new Date(e.start_time).toISOString().split('T')[0],
+    }))
+
+    // Pull in chores with due dates
+    const { data: chores } = await supabase.from('chores')
+      .select('*, assigned_user:users!assigned_to(display_name)')
+      .not('due_date', 'is', null)
+      .gte('due_date', `${y}-${String(m+1).padStart(2,'0')}-01`)
+      .lte('due_date', `${y}-${String(m+1).padStart(2,'0')}-31`)
+
+    const choreEvents = (chores ?? []).map((c: any) => ({
+      id: `chore-${c.id}`,
+      title: `✅ ${c.title}`,
+      start_time: `${c.due_date}T${c.due_time ?? '09:00:00'}`,
+      date_key: c.due_date,
+      color: c.status === 'completed' ? '#10B981' : '#EC4899',
+      location: c.assigned_user?.display_name ? `${c.assigned_user.display_name}${c.points_value ? ` · ${c.points_value}pts` : ''}` : '',
+      isChore: true,
+    }))
+
+    setEvents([...calEvents, ...workoutEvents, ...choreEvents])
   }
 
   useEffect(() => { load() }, [currentMonth])
 
-  const eventsFor = (day: number) => events.filter(e => {
-    const d = new Date(e.start_time)
-    return d.getDate()===day && d.getMonth()===currentMonth.getMonth() && d.getFullYear()===currentMonth.getFullYear()
-  })
+  const dayKey = (day: number) => `${currentMonth.getFullYear()}-${String(currentMonth.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+  const eventsFor = (day: number) => events.filter(e => e.date_key === dayKey(day))
 
   const selectedEvents = eventsFor(selected.getDate())
   const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay()
@@ -151,15 +173,19 @@ export default function CalendarPage() {
         <div className="space-y-2">
           {selectedEvents.length === 0
             ? <div className="text-[#475569] text-sm italic p-4 bg-[#1E293B] rounded-xl border border-[#334155]">No events — tap + Add Event</div>
-            : selectedEvents.map(e => (
-              <div key={e.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center gap-3">
-                <div className="w-1 h-10 rounded-full flex-shrink-0" style={{backgroundColor: e.color ?? '#6366F1'}} />
-                <div>
-                  <div className="font-semibold text-[#F1F5F9]">{e.title}</div>
-                  {e.location && <div className="text-sm text-[#64748B]">📍 {e.location}</div>}
+            : selectedEvents.sort((a,b) => (a.start_time||'').localeCompare(b.start_time||'')).map(e => {
+              const time = e.start_time ? new Date(e.start_time).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : ''
+              return (
+                <div key={e.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 flex items-center gap-3">
+                  <div className="w-1 h-10 rounded-full flex-shrink-0" style={{backgroundColor: e.color ?? '#6366F1'}} />
+                  <div className="flex-1">
+                    <div className="font-semibold text-[#F1F5F9]">{e.title}</div>
+                    {e.location && <div className="text-sm text-[#64748B]">{e.isChore ? '👤' : e.isWorkout ? '🔥' : '📍'} {e.location}</div>}
+                  </div>
+                  {time && <span className="text-xs text-[#64748B]">{time}</span>}
                 </div>
-              </div>
-            ))
+              )
+            })
           }
         </div>
       </div>
