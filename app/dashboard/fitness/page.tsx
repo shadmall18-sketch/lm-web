@@ -82,6 +82,9 @@ export default function FitnessPage() {
     load()
   }
 
+  // Format a Date as local YYYY-MM-DD (no UTC shift)
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+
   // Generate the list of dates for a recurring workout
   const buildDates = (startDate: string): string[] => {
     if (recurrence === 'none') return [startDate]
@@ -93,25 +96,12 @@ export default function FitnessPage() {
     while (cursor <= end && iter < 400) {
       iter++
       const dow = cursor.getDay()
-      const dateStr = cursor.toISOString().split('T')[0]
+      const dateStr = fmt(cursor)
       if (recurrence === 'daily') dates.push(dateStr)
       else if (recurrence === 'every_other_day') { dates.push(dateStr); cursor.setDate(cursor.getDate() + 1) }
       else if (recurrence === 'weekly') { if (dow === start.getDay()) dates.push(dateStr) }
-      else if (recurrence === 'every_other_week') { /* handled below */ }
       else if (recurrence === 'custom_days') { if (recurDays.includes(dow)) dates.push(dateStr) }
       cursor.setDate(cursor.getDate() + 1)
-    }
-    // every_other_week: take weekly matches and keep every 2nd
-    if (recurrence === 'every_other_week') {
-      let c = new Date(start)
-      let wk = 0
-      while (c <= end && dates.length < 200) {
-        if (c.getDay() === start.getDay()) {
-          if (wk % 2 === 0) dates.push(c.toISOString().split('T')[0])
-          wk++
-        }
-        c.setDate(c.getDate() + 1)
-      }
     }
     return dates
   }
@@ -140,7 +130,15 @@ export default function FitnessPage() {
 
   const confirmAdd = async (visibility: 'private'|'family') => {
     const ex = pendingExercise
+    if (recurrence === 'custom_days' && recurDays.length === 0) {
+      alert('Pick at least one day of the week first.')
+      return
+    }
     const dates = buildDates(date)
+    if (dates.length === 0) {
+      alert('No dates matched. Check your day selection and end date.')
+      return
+    }
     const sid = dates.length > 1 ? uuid() : null
     const rows = dates.map(d => ({
       family_id: familyId, user_id: uid,
