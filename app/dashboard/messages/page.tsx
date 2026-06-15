@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { subscribeToPush, getPushStatus } from '@/lib/push'
+import { uploadMedia } from '@/lib/upload'
 
 export default function MessagesPage() {
   const supabase = createClient()
@@ -11,6 +12,9 @@ export default function MessagesPage() {
   const [text, setText] = useState('')
   const [type, setType] = useState<'chat'|'announcement'|'emergency'>('chat')
   const [pushStatus, setPushStatus] = useState<string>('default')
+  const [uploading, setUploading] = useState(false)
+  const [pendingMedia, setPendingMedia] = useState<{url:string;type:'image'|'video'}|null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { getPushStatus().then(setPushStatus) }, [])
@@ -72,14 +76,34 @@ export default function MessagesPage() {
     return () => { supabase.removeChannel(channel) }
   }, [family?.id])
 
+  const handleFile = async (e: any) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    const result = await uploadMedia(file)
+    setUploading(false)
+    if (result) setPendingMedia(result)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  // Detect a URL in the text to store as a link
+  const extractLink = (str: string) => {
+    const match = str.match(/(https?:\/\/[^\s]+)/)
+    return match ? match[0] : null
+  }
+
   const handleSend = async () => {
-    if (!text.trim()) return
+    if (!text.trim() && !pendingMedia) return
     const content = text.trim(); setText('')
+    const media = pendingMedia; setPendingMedia(null)
     const { data: u } = await supabase.auth.getUser()
     const { data: profile } = await supabase.from('users').select('family_id, display_name').eq('id', u.user!.id).single()
-    await supabase.from('messages').insert({ family_id: profile?.family_id, sent_by: u.user!.id, type, content })
+    await supabase.from('messages').insert({
+      family_id: profile?.family_id, sent_by: u.user!.id, type, content,
+      media_url: media?.url ?? null, media_type: media?.type ?? null,
+      link_url: extractLink(content),
+    })
 
-    // Fire push notification to the rest of the family
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     fetch(`${supabaseUrl}/functions/v1/send-push`, {
@@ -89,7 +113,7 @@ export default function MessagesPage() {
         familyId: profile?.family_id,
         senderId: u.user!.id,
         senderName: profile?.display_name ?? 'Family',
-        content, type,
+        content: content || (media ? '📷 Photo' : ''), type,
       }),
     }).catch(() => {})
   }
@@ -123,7 +147,16 @@ export default function MessagesPage() {
               <div className={`max-w-xs md:max-w-md rounded-2xl px-4 py-2.5 ${isMe?'bg-[#6366F1] rounded-br-sm':'bg-[#1E293B] rounded-bl-sm border border-[#334155]'} ${msg.type==='emergency'?'bg-red-900 border border-red-500':''} ${msg.type==='announcement'?'bg-amber-900 border border-amber-500':''}`}>
                 {!isMe && <div className="text-xs font-bold text-[#6366F1] mb-1">{msg.sender?.display_name}</div>}
                 {msg.type!=='chat' && <div className="text-xs font-bold text-red-300 mb-1">{msg.type==='emergency'?'🚨 EMERGENCY':'📢 ANNOUNCEMENT'}</div>}
-                <div className="text-[#F1F5F9] text-sm">{msg.content}</div>
+                {msg.media_url && msg.media_type === 'image' && (
+                  <img src={msg.media_url} alt="" className="rounded-lg mb-2 max-w-full max-h-64 object-cover" />
+                )}
+                {msg.media_url && msg.media_type === 'video' && (
+                  <video src={msg.media_url} controls className="rounded-lg mb-2 max-w-full max-h-64" />
+                )}
+                {msg.content && <div className="text-[#F1F5F9] text-sm break-words">{msg.content}</div>}
+                {msg.link_url && (
+                  <a href={msg.link_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#A5B4FC] underline block mt-1 break-all">🔗 {msg.link_url}</a>
+                )}
                 <div className="text-xs text-[#64748B] mt-1 text-right">{new Date(msg.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
               </div>
             </div>
@@ -132,9 +165,21 @@ export default function MessagesPage() {
         <div ref={bottomRef} />
       </div>
 
+      {pendingMedia && (
+        <div className="mb-2 relative inline-block">
+          {pendingMedia.type === 'image'
+            ? <img src={pendingMedia.url} alt="" className="h-20 rounded-lg" />
+            : <video src={pendingMedia.url} className="h-20 rounded-lg" />}
+          <button onClick={() => setPendingMedia(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">✕</button>
+        </div>
+      )}
       <div className="flex gap-2">
+        <input ref={fileRef} type="file" accept="image/*,video/*" onChange={handleFile} className="hidden" />
+        <button onClick={() => fileRef.current?.click()} disabled={uploading} className="w-11 h-11 rounded-full bg-[#1E293B] border border-[#334155] flex items-center justify-center text-lg flex-shrink-0 disabled:opacity-50">
+          {uploading ? '⏳' : '📷'}
+        </button>
         <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key==='Enter' && handleSend()} placeholder="Message family..." className="flex-1 bg-[#1E293B] border border-[#334155] rounded-2xl px-4 py-3 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-        <button onClick={handleSend} className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-lg" style={{backgroundColor: typeColor(type)}}>↑</button>
+        <button onClick={handleSend} className="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0" style={{backgroundColor: typeColor(type)}}>↑</button>
       </div>
     </div>
   )

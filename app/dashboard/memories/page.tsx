@@ -1,13 +1,16 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { uploadMedia } from '@/lib/upload'
 
 export default function MemoriesPage() {
   const supabase = createClient()
   const [memories, setMemories] = useState<any[]>([])
   const [taggable, setTaggable] = useState<any[]>([])
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({ title:'', content:'', memory_date: new Date().toISOString().split('T')[0] })
+  const [form, setForm] = useState({ title:'', content:'', memory_date: new Date().toISOString().split('T')[0], link_url:'' })
+  const [mediaItems, setMediaItems] = useState<{url:string;type:'image'|'video'}[]>([])
+  const [uploading, setUploading] = useState(false)
   const [selectedTags, setSelectedTags] = useState<any[]>([])
   const [me, setMe] = useState<any>(null)
   const [pendingTags, setPendingTags] = useState<any[]>([])
@@ -75,26 +78,36 @@ export default function MemoriesPage() {
     setSelectedTags(prev => prev.find(x => x.key === t.key) ? prev.filter(x => x.key !== t.key) : [...prev, t])
   }
 
+  const handleFiles = async (e: any) => {
+    const files = Array.from(e.target.files ?? []) as File[]
+    if (files.length === 0) return
+    setUploading(true)
+    for (const file of files) {
+      const result = await uploadMedia(file)
+      if (result) setMediaItems(prev => [...prev, result])
+    }
+    setUploading(false)
+    e.target.value = ''
+  }
+
   const handleAdd = async () => {
-    if (!form.title && !form.content) return
+    if (!form.title && !form.content && mediaItems.length === 0) return
     const { data: u } = await supabase.auth.getUser()
     const fid = await getFamilyId()
-    const { data: mem } = await supabase.from('memories').insert({ ...form, family_id: fid, created_by: u.user!.id }).select().single()
+    const { data: mem } = await supabase.from('memories').insert({ ...form, media: mediaItems, family_id: fid, created_by: u.user!.id }).select().single()
 
-    // Insert tags
     if (mem && selectedTags.length > 0) {
       const tagRows = selectedTags.map(t => ({
         memory_id: mem.id,
         tagged_user_id: t.type === 'user' ? t.id : null,
         tagged_managed_id: t.type === 'managed' ? t.id : null,
         tagged_by: u.user!.id,
-        // Network real-user tags need approval; family + managed are auto-approved
         status: (t.type === 'user' && t.isNetwork) ? 'pending' : 'approved',
       }))
       await supabase.from('memory_tags').insert(tagRows)
     }
 
-    setShowAdd(false); setSelectedTags([]); setForm({ title:'', content:'', memory_date: new Date().toISOString().split('T')[0] }); load()
+    setShowAdd(false); setSelectedTags([]); setMediaItems([]); setForm({ title:'', content:'', memory_date: new Date().toISOString().split('T')[0], link_url:'' }); load()
   }
 
   return (
@@ -133,6 +146,27 @@ export default function MemoriesPage() {
             <label className="text-xs text-[#94A3B8] block mb-1">When did this happen? (can be in the past)</label>
             <input value={form.memory_date} onChange={e => setForm(p=>({...p,memory_date:e.target.value}))} type="date" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
           </div>
+
+          {/* Photos / videos */}
+          <div>
+            <label className="text-xs text-[#94A3B8] block mb-2">Photos & videos</label>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {mediaItems.map((m, i) => (
+                <div key={i} className="relative">
+                  {m.type === 'image'
+                    ? <img src={m.url} alt="" className="h-20 w-20 object-cover rounded-lg" />
+                    : <video src={m.url} className="h-20 w-20 object-cover rounded-lg" />}
+                  <button onClick={() => setMediaItems(prev => prev.filter((_,x)=>x!==i))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">✕</button>
+                </div>
+              ))}
+              <label className="h-20 w-20 rounded-lg border-2 border-dashed border-[#334155] flex items-center justify-center cursor-pointer hover:border-[#6366F1] text-2xl text-[#64748B]">
+                {uploading ? '⏳' : '+'}
+                <input type="file" accept="image/*,video/*" multiple onChange={handleFiles} className="hidden" />
+              </label>
+            </div>
+          </div>
+
+          <input value={form.link_url} onChange={e => setForm(p=>({...p,link_url:e.target.value}))} placeholder="Share a link (optional)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
 
           {/* Tag people */}
           <div>
@@ -201,6 +235,18 @@ export default function MemoriesPage() {
                           </div>
                           {m.title && <h3 className="font-bold text-[#F1F5F9] mb-2">{m.title}</h3>}
                           {m.content && <p className="text-sm text-[#94A3B8] leading-relaxed mb-3">{m.content}</p>}
+                          {Array.isArray(m.media) && m.media.length > 0 && (
+                            <div className={`grid gap-2 mb-3 ${m.media.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                              {m.media.map((media: any, i: number) => (
+                                media.type === 'image'
+                                  ? <img key={i} src={media.url} alt="" className="rounded-lg w-full max-h-64 object-cover" />
+                                  : <video key={i} src={media.url} controls className="rounded-lg w-full max-h-64" />
+                              ))}
+                            </div>
+                          )}
+                          {m.link_url && (
+                            <a href={m.link_url.startsWith('http')?m.link_url:`https://${m.link_url}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#A5B4FC] underline block mb-2 break-all">🔗 {m.link_url}</a>
+                          )}
                           {approvedTags.length > 0 && (
                             <div className="flex flex-wrap gap-1.5 pt-2 border-t border-[#334155]">
                               {approvedTags.map((t: any) => (
