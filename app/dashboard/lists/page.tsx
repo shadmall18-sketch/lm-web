@@ -1,6 +1,7 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
+import { uploadMedia } from '@/lib/upload'
 
 const LIST_TYPES = [
   { value: 'wish', label: '⭐ Wish List' },
@@ -23,7 +24,9 @@ export default function ListsPage() {
   const [items, setItems] = useState<any[]>([])
   const [showNewList, setShowNewList] = useState(false)
   const [listForm, setListForm] = useState({ name:'', list_type:'wish', visibility:'family' })
-  const [itemForm, setItemForm] = useState({ title:'', notes:'', link:'', price:'' })
+  const [itemForm, setItemForm] = useState({ title:'', notes:'', link:'', price:'', image_url:'' })
+  const [uploadingImg, setUploadingImg] = useState(false)
+  const itemFileRef = useRef<HTMLInputElement>(null)
   const [showAddItem, setShowAddItem] = useState(false)
 
   const getFamilyId = async () => {
@@ -68,10 +71,20 @@ export default function ListsPage() {
     setSelected(null); load()
   }
 
+  const handleItemImage = async (e: any) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingImg(true)
+    const result = await uploadMedia(file)
+    setUploadingImg(false)
+    if (result) setItemForm(p => ({ ...p, image_url: result.url }))
+    if (itemFileRef.current) itemFileRef.current.value = ''
+  }
+
   const addItem = async () => {
     if (!itemForm.title) return
     await supabase.from('wishlist_items').insert({ ...itemForm, wishlist_id: selected.id })
-    setItemForm({ title:'', notes:'', link:'', price:'' }); setShowAddItem(false); openList(selected)
+    setItemForm({ title:'', notes:'', link:'', price:'', image_url:'' }); setShowAddItem(false); openList(selected)
   }
 
   const removeItem = async (id: string) => {
@@ -120,7 +133,21 @@ export default function ListsPage() {
         {showAddItem && isOwner && (
           <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-4 space-y-3">
             <input value={itemForm.title} onChange={e => setItemForm(p=>({...p,title:e.target.value}))} placeholder="What do you want?" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-            <input value={itemForm.link} onChange={e => setItemForm(p=>({...p,link:e.target.value}))} placeholder="Link (optional)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <input value={itemForm.link} onChange={e => setItemForm(p=>({...p,link:e.target.value}))} placeholder="Link from Amazon, Walmart, any store (optional)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <div className="flex gap-2 items-center">
+              <input ref={itemFileRef} type="file" accept="image/*" onChange={handleItemImage} className="hidden" />
+              {itemForm.image_url ? (
+                <div className="relative">
+                  <img src={itemForm.image_url} alt="" className="h-16 w-16 object-cover rounded-lg" />
+                  <button onClick={() => setItemForm(p=>({...p,image_url:''}))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs">✕</button>
+                </div>
+              ) : (
+                <button onClick={() => itemFileRef.current?.click()} disabled={uploadingImg} className="h-16 w-16 rounded-lg border-2 border-dashed border-[#334155] flex items-center justify-center text-xl text-[#64748B] hover:border-[#6366F1] disabled:opacity-50">
+                  {uploadingImg ? '⏳' : '📷'}
+                </button>
+              )}
+              <span className="text-xs text-[#475569]">Add a photo (optional)</span>
+            </div>
             <div className="flex gap-2">
               <input value={itemForm.price} onChange={e => setItemForm(p=>({...p,price:e.target.value}))} placeholder="Price (optional)" className="w-32 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
               <input value={itemForm.notes} onChange={e => setItemForm(p=>({...p,notes:e.target.value}))} placeholder="Notes (size, color...)" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
@@ -133,12 +160,15 @@ export default function ListsPage() {
           {items.map(item => (
             <div key={item.id} className={`bg-[#1E293B] border rounded-xl p-4 ${item.claimed_by && !isOwner ? 'border-[#10B981]/40' : 'border-[#334155]'}`}>
               <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="font-semibold text-[#F1F5F9]">{item.title}</div>
-                  {item.notes && <div className="text-sm text-[#64748B] mt-0.5">{item.notes}</div>}
-                  <div className="flex gap-3 mt-1">
-                    {item.price && <span className="text-xs text-[#94A3B8]">{item.price}</span>}
-                    {item.link && <a href={item.link.startsWith('http')?item.link:`https://${item.link}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#6366F1] hover:underline">View link →</a>}
+                <div className="flex gap-3 flex-1">
+                  {item.image_url && <img src={item.image_url} alt="" className="h-16 w-16 object-cover rounded-lg flex-shrink-0" />}
+                  <div className="flex-1">
+                    <div className="font-semibold text-[#F1F5F9]">{item.title}</div>
+                    {item.notes && <div className="text-sm text-[#64748B] mt-0.5">{item.notes}</div>}
+                    <div className="flex gap-3 mt-1 items-center">
+                      {item.price && <span className="text-xs text-[#94A3B8]">{item.price}</span>}
+                      {item.link && <a href={item.link.startsWith('http')?item.link:`https://${item.link}`} target="_blank" rel="noopener noreferrer" className="text-xs text-[#6366F1] hover:underline">🔗 {storeName(item.link)} →</a>}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 ml-3">
@@ -213,6 +243,23 @@ export default function ListsPage() {
       {myLists.length === 0 && otherLists.length === 0 && <div className="text-center text-[#475569] italic py-12">No lists yet — create your first wish list!</div>}
     </div>
   )
+}
+
+function storeName(url: string): string {
+  try {
+    const host = new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace('www.', '')
+    const map: Record<string, string> = {
+      'amazon.com': 'Amazon', 'walmart.com': 'Walmart', 'target.com': 'Target',
+      'etsy.com': 'Etsy', 'ebay.com': 'eBay', 'bestbuy.com': 'Best Buy',
+      'nike.com': 'Nike', 'lego.com': 'LEGO', 'a.co': 'Amazon',
+    }
+    for (const key in map) if (host.includes(key)) return map[key]
+    // Otherwise return the domain name capitalized
+    const name = host.split('.')[0]
+    return name.charAt(0).toUpperCase() + name.slice(1)
+  } catch {
+    return 'View link'
+  }
 }
 
 function ListRow({ list, onClick, mine }: any) {
