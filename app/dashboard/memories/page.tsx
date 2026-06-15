@@ -157,31 +157,69 @@ export default function MemoriesPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {memories.map(m => {
-          const approvedTags = (m.tags ?? []).filter((t: any) => t.status === 'approved')
-          return (
-            <div key={m.id} className="bg-[#1E293B] border border-[#334155] rounded-xl p-5">
-              <div className="flex justify-between items-start mb-3">
-                <span className="text-xs font-bold text-[#6366F1]">{m.memory_date ? new Date(m.memory_date).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : ''}</span>
-                <span className="text-xs text-[#64748B]">{m.creator?.display_name}</span>
-              </div>
-              {m.title && <h3 className="font-bold text-[#F1F5F9] mb-2">{m.title}</h3>}
-              {m.content && <p className="text-sm text-[#94A3B8] leading-relaxed mb-3">{m.content}</p>}
-              {approvedTags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pt-2 border-t border-[#334155]">
-                  {approvedTags.map((t: any) => (
-                    <span key={t.id} className="text-xs bg-[#312E81] text-[#A5B4FC] px-2 py-0.5 rounded-full">
-                      {t.user?.display_name ?? t.managed?.display_name}
-                    </span>
-                  ))}
+      {/* Timeline */}
+      {memories.length === 0 ? (
+        <div className="text-center text-[#475569] italic py-16">No memories yet — capture your first family moment!</div>
+      ) : (
+        <div className="relative">
+          {(() => {
+            // Group memories by year
+            const groups: Record<string, any[]> = {}
+            memories.forEach(m => {
+              const yr = m.memory_date ? new Date(m.memory_date).getFullYear().toString() : 'Undated'
+              if (!groups[yr]) groups[yr] = []
+              groups[yr].push(m)
+            })
+            const years = Object.keys(groups).sort((a, b) => b.localeCompare(a))
+
+            return years.map(year => (
+              <div key={year} className="mb-8">
+                {/* Year marker */}
+                <div className="flex items-center gap-3 mb-4 sticky top-0 bg-[#0A0F1E] py-2 z-10">
+                  <div className="text-xl font-black text-[#6366F1]">{year}</div>
+                  <div className="flex-1 h-px bg-[#1E293B]" />
+                  <div className="text-xs text-[#475569]">{groups[year].length} {groups[year].length === 1 ? 'memory' : 'memories'}</div>
                 </div>
-              )}
-            </div>
-          )
-        })}
-        {memories.length===0 && <div className="col-span-2 text-center text-[#475569] italic py-16">No memories yet — capture your first family moment!</div>}
-      </div>
+
+                {/* Timeline items */}
+                <div className="relative pl-8 space-y-4">
+                  {/* Vertical line */}
+                  <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-[#1E293B]" />
+
+                  {groups[year].map(m => {
+                    const approvedTags = (m.tags ?? []).filter((t: any) => t.status === 'approved')
+                    return (
+                      <div key={m.id} className="relative">
+                        {/* Dot */}
+                        <div className="absolute -left-[26px] top-4 w-3.5 h-3.5 rounded-full bg-[#6366F1] border-2 border-[#0A0F1E]" />
+                        <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-5">
+                          <div className="flex justify-between items-start mb-2">
+                            <span className="text-xs font-bold text-[#6366F1]">
+                              {m.memory_date ? new Date(m.memory_date).toLocaleDateString('en-US',{month:'long',day:'numeric'}) : 'Undated'}
+                            </span>
+                            <span className="text-xs text-[#64748B]">{m.creator?.display_name}</span>
+                          </div>
+                          {m.title && <h3 className="font-bold text-[#F1F5F9] mb-2">{m.title}</h3>}
+                          {m.content && <p className="text-sm text-[#94A3B8] leading-relaxed mb-3">{m.content}</p>}
+                          {approvedTags.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-2 border-t border-[#334155]">
+                              {approvedTags.map((t: any) => (
+                                <span key={t.id} className="text-xs bg-[#312E81] text-[#A5B4FC] px-2 py-0.5 rounded-full">
+                                  {t.user?.display_name ?? t.managed?.display_name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))
+          })()}
+        </div>
+      )}
     </div>
   )
 }
