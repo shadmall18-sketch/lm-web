@@ -37,17 +37,23 @@ export default function ContactsPage() {
   const [childForm, setChildForm] = useState({ display_name:'', date_of_birth:'', notes:'' })
   const [convertEmail, setConvertEmail] = useState('')
   const [converting, setConverting] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   const addChild = async () => {
-    if (!childForm.display_name) return
-    const fid = await getFamilyId()
-    await supabase.from('managed_persons').insert({
-      family_id: fid, created_by: me?.id,
-      display_name: childForm.display_name,
-      date_of_birth: childForm.date_of_birth || null,
-      notes: childForm.notes,
-    })
-    setShowAddChild(false); setChildForm({ display_name:'', date_of_birth:'', notes:'' }); load()
+    if (!childForm.display_name || saving) return
+    setSaving(true)
+    try {
+      const fid = await getFamilyId()
+      await supabase.from('managed_persons').insert({
+        family_id: fid, created_by: me?.id,
+        display_name: childForm.display_name,
+        date_of_birth: childForm.date_of_birth || null,
+        notes: childForm.notes,
+      })
+      setShowAddChild(false); setChildForm({ display_name:'', date_of_birth:'', notes:'' }); load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   const convertToAccount = async () => {
@@ -176,10 +182,15 @@ export default function ContactsPage() {
   }
 
   const handleAdd = async () => {
-    if (!form.first_name) return
-    const fid = await getFamilyId()
-    await supabase.from('contacts').insert({ ...form, family_id: fid, created_by: me?.id, date_of_birth: form.date_of_birth || null })
-    setShowAdd(false); setShowAboutFields(false); setForm(BLANK); load()
+    if (!form.first_name || saving) return
+    setSaving(true)
+    try {
+      const fid = await getFamilyId()
+      await supabase.from('contacts').insert({ ...form, family_id: fid, created_by: me?.id, date_of_birth: form.date_of_birth || null })
+      setShowAdd(false); setShowAboutFields(false); setForm(BLANK); load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   // Build the "about" rows for display — from member's about_me OR contact's own fields
@@ -295,7 +306,7 @@ export default function ContactsPage() {
           </div>
           <textarea value={childForm.notes} onChange={e => setChildForm(p=>({...p,notes:e.target.value}))} placeholder="Notes (favorites, allergies, anything to remember)" rows={2} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1] resize-none" />
           <div className="flex gap-2">
-            <button onClick={addChild} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save Child</button>
+            <button onClick={addChild} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save Child"}</button>
             <button onClick={() => setShowAddChild(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
           </div>
         </div>
@@ -337,7 +348,7 @@ export default function ContactsPage() {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={handleAdd} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
+            <button onClick={handleAdd} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save"}</button>
             <button onClick={() => { setShowAdd(false); setShowAboutFields(false); setForm(BLANK) }} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
           </div>
         </div>

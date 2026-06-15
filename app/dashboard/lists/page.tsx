@@ -26,6 +26,7 @@ export default function ListsPage() {
   const [listForm, setListForm] = useState({ name:'', list_type:'wish', visibility:'family' })
   const [itemForm, setItemForm] = useState({ title:'', notes:'', link:'', price:'', image_url:'' })
   const [uploadingImg, setUploadingImg] = useState(false)
+  const [saving, setSaving] = useState(false)
   const itemFileRef = useRef<HTMLInputElement>(null)
   const [showAddItem, setShowAddItem] = useState(false)
 
@@ -59,10 +60,13 @@ export default function ListsPage() {
   }
 
   const createList = async () => {
-    if (!listForm.name) return
-    const fid = await getFamilyId()
-    await supabase.from('wishlists').insert({ ...listForm, family_id: fid, owner_id: me.id })
-    setShowNewList(false); setListForm({ name:'', list_type:'wish', visibility:'family' }); load()
+    if (!listForm.name || saving) return
+    setSaving(true)
+    try {
+      const fid = await getFamilyId()
+      await supabase.from('wishlists').insert({ ...listForm, family_id: fid, owner_id: me.id })
+      setShowNewList(false); setListForm({ name:'', list_type:'wish', visibility:'family' }); load()
+    } finally { setSaving(false) }
   }
 
   const deleteList = async (id: string) => {
@@ -82,9 +86,12 @@ export default function ListsPage() {
   }
 
   const addItem = async () => {
-    if (!itemForm.title) return
-    await supabase.from('wishlist_items').insert({ ...itemForm, wishlist_id: selected.id })
-    setItemForm({ title:'', notes:'', link:'', price:'', image_url:'' }); setShowAddItem(false); openList(selected)
+    if (!itemForm.title || saving) return
+    setSaving(true)
+    try {
+      await supabase.from('wishlist_items').insert({ ...itemForm, wishlist_id: selected.id })
+      setItemForm({ title:'', notes:'', link:'', price:'', image_url:'' }); setShowAddItem(false); openList(selected)
+    } finally { setSaving(false) }
   }
 
   const removeItem = async (id: string) => {
@@ -152,7 +159,7 @@ export default function ListsPage() {
               <input value={itemForm.price} onChange={e => setItemForm(p=>({...p,price:e.target.value}))} placeholder="Price (optional)" className="w-32 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
               <input value={itemForm.notes} onChange={e => setItemForm(p=>({...p,notes:e.target.value}))} placeholder="Notes (size, color...)" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
             </div>
-            <button onClick={addItem} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Add Item</button>
+            <button onClick={addItem} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"...":"Add Item"}</button>
           </div>
         )}
 
@@ -224,7 +231,7 @@ export default function ListsPage() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={createList} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Create List</button>
+            <button onClick={createList} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"...":"Create List"}</button>
             <button onClick={() => setShowNewList(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
           </div>
         </div>

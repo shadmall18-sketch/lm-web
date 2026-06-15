@@ -11,6 +11,7 @@ export default function MemoriesPage() {
   const [form, setForm] = useState({ title:'', content:'', memory_date: new Date().toISOString().split('T')[0], link_url:'' })
   const [mediaItems, setMediaItems] = useState<{url:string;type:'image'|'video'}[]>([])
   const [uploading, setUploading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [selectedTags, setSelectedTags] = useState<any[]>([])
   const [me, setMe] = useState<any>(null)
   const [pendingTags, setPendingTags] = useState<any[]>([])
@@ -91,7 +92,9 @@ export default function MemoriesPage() {
   }
 
   const handleAdd = async () => {
-    if (!form.title && !form.content && mediaItems.length === 0) return
+    if ((!form.title && !form.content && mediaItems.length === 0) || saving) return
+    setSaving(true)
+    try {
     const { data: u } = await supabase.auth.getUser()
     const fid = await getFamilyId()
     const { data: mem } = await supabase.from('memories').insert({ ...form, media: mediaItems, family_id: fid, created_by: u.user!.id }).select().single()
@@ -108,6 +111,7 @@ export default function MemoriesPage() {
     }
 
     setShowAdd(false); setSelectedTags([]); setMediaItems([]); setForm({ title:'', content:'', memory_date: new Date().toISOString().split('T')[0], link_url:'' }); load()
+    } finally { setSaving(false) }
   }
 
   return (
@@ -185,7 +189,7 @@ export default function MemoriesPage() {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={handleAdd} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save Memory</button>
+            <button onClick={handleAdd} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save Memory"}</button>
             <button onClick={() => { setShowAdd(false); setSelectedTags([]) }} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
           </div>
         </div>

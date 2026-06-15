@@ -11,6 +11,7 @@ export default function ChoresPage() {
   const [tab, setTab] = useState<'chores'|'rewards'>('chores')
   const [showAdd, setShowAdd] = useState(false)
   const [showAddReward, setShowAddReward] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'' })
   const [rewardForm, setRewardForm] = useState({ title:'', points_cost:'50', description:'' })
 
@@ -91,19 +92,29 @@ export default function ChoresPage() {
   }
 
   const handleAddChore = async () => {
-    if (!form.title || !form.assigned_to) return
-    const { data: u } = await supabase.auth.getUser()
-    const fid = await getFamilyId()
-    await supabase.from('chores').insert({ title: form.title, points_value: parseInt(form.points_value)||0, assigned_to: form.assigned_to, due_date: form.due_date||null, family_id: fid, created_by: u.user!.id })
-    setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'' }); load()
+    if (!form.title || !form.assigned_to || saving) return
+    setSaving(true)
+    try {
+      const { data: u } = await supabase.auth.getUser()
+      const fid = await getFamilyId()
+      await supabase.from('chores').insert({ title: form.title, points_value: parseInt(form.points_value)||0, assigned_to: form.assigned_to, due_date: form.due_date||null, family_id: fid, created_by: u.user!.id })
+      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'' }); load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleAddReward = async () => {
-    if (!rewardForm.title) return
-    const { data: u } = await supabase.auth.getUser()
-    const fid = await getFamilyId()
-    await supabase.from('rewards').insert({ title: rewardForm.title, description: rewardForm.description, points_cost: parseInt(rewardForm.points_cost)||50, family_id: fid, created_by: u.user!.id })
-    setShowAddReward(false); setRewardForm({ title:'', points_cost:'50', description:'' }); load()
+    if (!rewardForm.title || saving) return
+    setSaving(true)
+    try {
+      const { data: u } = await supabase.auth.getUser()
+      const fid = await getFamilyId()
+      await supabase.from('rewards').insert({ title: rewardForm.title, description: rewardForm.description, points_cost: parseInt(rewardForm.points_cost)||50, family_id: fid, created_by: u.user!.id })
+      setShowAddReward(false); setRewardForm({ title:'', points_cost:'50', description:'' }); load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   const pending = chores.filter(c => c.status === 'pending')
@@ -142,7 +153,7 @@ export default function ChoresPage() {
                 <input value={form.due_date} onChange={e => setForm(p=>({...p,due_date:e.target.value}))} type="date" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
               </div>
               <div className="flex gap-2">
-                <button onClick={handleAddChore} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
+                <button onClick={handleAddChore} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save"}</button>
                 <button onClick={() => setShowAdd(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg hover:bg-[#0F172A]">Cancel</button>
               </div>
             </div>
@@ -211,7 +222,7 @@ export default function ChoresPage() {
               <input value={rewardForm.description} onChange={e => setRewardForm(p=>({...p,description:e.target.value}))} placeholder="Description (optional)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
               <input value={rewardForm.points_cost} onChange={e => setRewardForm(p=>({...p,points_cost:e.target.value}))} placeholder="Points cost" type="number" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
               <div className="flex gap-2">
-                <button onClick={handleAddReward} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save</button>
+                <button onClick={handleAddReward} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save"}</button>
                 <button onClick={() => setShowAddReward(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
               </div>
             </div>
