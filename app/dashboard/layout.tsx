@@ -18,6 +18,7 @@ const NAV = [
   { href: '/dashboard/about', label: 'About Me', icon: '🪪' },
   { href: '/dashboard/grocery', label: 'Grocery', icon: '🛒' },
   { href: '/dashboard/lists', label: 'Lists', icon: '🎁' },
+  { href: '/dashboard/share', label: 'Quick Add', icon: '🔗' },
   { href: '/dashboard/memories', label: 'Memories', icon: '📸' },
   { href: '/dashboard/members', label: 'Members', icon: '👨‍👩‍👧' },
 ]
