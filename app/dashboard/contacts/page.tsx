@@ -33,6 +33,54 @@ export default function ContactsPage() {
   const [showAboutFields, setShowAboutFields] = useState(false)
   const [form, setForm] = useState<any>(BLANK)
   const [me, setMe] = useState<any>(null)
+  const [showAddChild, setShowAddChild] = useState(false)
+  const [childForm, setChildForm] = useState({ display_name:'', date_of_birth:'', notes:'' })
+  const [convertEmail, setConvertEmail] = useState('')
+  const [converting, setConverting] = useState(false)
+
+  const addChild = async () => {
+    if (!childForm.display_name) return
+    const fid = await getFamilyId()
+    await supabase.from('managed_persons').insert({
+      family_id: fid, created_by: me?.id,
+      display_name: childForm.display_name,
+      date_of_birth: childForm.date_of_birth || null,
+      notes: childForm.notes,
+    })
+    setShowAddChild(false); setChildForm({ display_name:'', date_of_birth:'', notes:'' }); load()
+  }
+
+  const convertToAccount = async () => {
+    if (!convertEmail) return
+    setConverting(true)
+    try {
+      // Create the real account via the create-account-direct edge function
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      const fid = await getFamilyId()
+      const res = await fetch(`${supabaseUrl}/functions/v1/convert-child`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseKey}` },
+        body: JSON.stringify({
+          managedId: selected.id,
+          email: convertEmail,
+          displayName: selected.display_name,
+          familyId: fid,
+        }),
+      })
+      const result = await res.json()
+      if (result.success) {
+        alert(`Account created! ${selected.display_name} can now log in with ${convertEmail} using the temporary password sent to them. All their tagged memories are now on their account.`)
+        setSelected(null); setConvertEmail(''); load()
+      } else {
+        alert('Could not convert: ' + (result.error ?? 'unknown error'))
+      }
+    } catch (e: any) {
+      alert('Error: ' + e.message)
+    } finally {
+      setConverting(false)
+    }
+  }
 
   const getFamilyId = async () => {
     const { data: u } = await supabase.auth.getUser()
@@ -78,7 +126,22 @@ export default function ContactsPage() {
     })
 
     const dbContacts = (data ?? []).map((c: any) => ({ ...c, person_key: `contact-${c.id}` }))
-    setContacts([...memberContacts, ...dbContacts])
+
+    // Managed children (no login, this family only)
+    const { data: managed } = await supabase.from('managed_persons')
+      .select('*').eq('family_id', meData?.family_id).is('converted_user_id', null)
+    const managedContacts = (managed ?? []).map((m: any) => ({
+      ...m,
+      id: m.id,
+      person_key: `managed-${m.id}`,
+      first_name: m.display_name?.split(' ')[0] ?? m.display_name,
+      last_name: m.display_name?.split(' ').slice(1).join(' ') ?? '',
+      relationship: 'Child (managed)',
+      is_family_member: true,
+      isManaged: true,
+    }))
+
+    setContacts([...memberContacts, ...managedContacts, ...dbContacts])
   }
 
   useEffect(() => { load() }, [])
@@ -135,7 +198,20 @@ export default function ContactsPage() {
           <h1 className="text-2xl font-bold text-[#F1F5F9]">{selected.first_name} {selected.last_name}</h1>
           {selected.relationship && <p className="text-[#64748B] mt-1">{selected.relationship}</p>}
           {selected.isMember && <span className="mt-2 text-xs font-semibold text-[#6366F1] bg-[#1E1B4B] px-3 py-1 rounded-full">On LM · profile they filled out</span>}
+          {selected.isManaged && <span className="mt-2 text-xs font-semibold text-[#F59E0B] bg-[#3A2A0F] px-3 py-1 rounded-full">Managed child · no login yet</span>}
         </div>
+
+        {/* Convert managed child to real account (admins only) */}
+        {selected.isManaged && me?.role === 'admin' && (
+          <div className="mb-6 bg-[#1E1B4B]/30 border border-[#6366F1]/30 rounded-xl p-4">
+            <h2 className="text-sm font-bold text-[#A5B4FC] mb-1">Give {selected.first_name} their own account</h2>
+            <p className="text-xs text-[#64748B] mb-3">Creates a real login. Every memory {selected.first_name} is tagged in moves to their new account automatically.</p>
+            <div className="flex gap-2">
+              <input value={convertEmail} onChange={e => setConvertEmail(e.target.value)} placeholder="Their email" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+              <button onClick={convertToAccount} disabled={converting} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg disabled:opacity-50">{converting ? '...' : 'Create'}</button>
+            </div>
+          </div>
+        )}
 
         {/* Contact Info */}
         {(selected.date_of_birth || selected.phone || selected.email || selected.address) && (
@@ -202,8 +278,28 @@ export default function ContactsPage() {
     <div className="p-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-[#F1F5F9]">People</h1>
-        <button onClick={() => setShowAdd(!showAdd)} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-xl hover:bg-[#4F46E5]">+ Add</button>
+        <div className="flex gap-2">
+          <button onClick={() => { setShowAddChild(!showAddChild); setShowAdd(false) }} className="bg-[#1E293B] border border-[#6366F1]/40 text-[#A5B4FC] text-sm font-bold px-4 py-2 rounded-xl hover:bg-[#312E81]">+ Child</button>
+          <button onClick={() => { setShowAdd(!showAdd); setShowAddChild(false) }} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-xl hover:bg-[#4F46E5]">+ Add</button>
+        </div>
       </div>
+
+      {showAddChild && (
+        <div className="bg-[#1E293B] border border-[#6366F1]/30 rounded-xl p-4 mb-6 space-y-3">
+          <div className="text-sm font-bold text-[#A5B4FC]">Add a young child</div>
+          <p className="text-xs text-[#64748B]">For kids too young for their own login. Store their info and tag them in memories. You can turn this into a real account later.</p>
+          <input value={childForm.display_name} onChange={e => setChildForm(p=>({...p,display_name:e.target.value}))} placeholder="Child's name *" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+          <div>
+            <label className="text-xs text-[#94A3B8] block mb-1">Birthday</label>
+            <input value={childForm.date_of_birth} onChange={e => setChildForm(p=>({...p,date_of_birth:e.target.value}))} type="date" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+          </div>
+          <textarea value={childForm.notes} onChange={e => setChildForm(p=>({...p,notes:e.target.value}))} placeholder="Notes (favorites, allergies, anything to remember)" rows={2} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1] resize-none" />
+          <div className="flex gap-2">
+            <button onClick={addChild} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save Child</button>
+            <button onClick={() => setShowAddChild(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {showAdd && (
         <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-3">
