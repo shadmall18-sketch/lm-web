@@ -12,7 +12,7 @@ export default function ChoresPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showAddReward, setShowAddReward] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'' })
+  const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'' })
   const [rewardForm, setRewardForm] = useState({ title:'', points_cost:'50', description:'' })
 
   const load = async () => {
@@ -97,8 +97,8 @@ export default function ChoresPage() {
     try {
       const { data: u } = await supabase.auth.getUser()
       const fid = await getFamilyId()
-      await supabase.from('chores').insert({ title: form.title, points_value: parseInt(form.points_value)||0, assigned_to: form.assigned_to, due_date: form.due_date||null, family_id: fid, created_by: u.user!.id })
-      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'' }); load()
+      await supabase.from('chores').insert({ title: form.title, points_value: parseInt(form.points_value)||0, assigned_to: form.assigned_to, due_date: form.due_date||null, due_time: form.due_time||null, reminder_minutes: form.reminder_minutes ? parseInt(form.reminder_minutes) : null, family_id: fid, created_by: u.user!.id })
+      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'' }); load()
     } finally {
       setSaving(false)
     }
@@ -151,6 +151,16 @@ export default function ChoresPage() {
               <div className="flex gap-3">
                 <input value={form.points_value} onChange={e => setForm(p=>({...p,points_value:e.target.value}))} placeholder="Points" type="number" className="w-24 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
                 <input value={form.due_date} onChange={e => setForm(p=>({...p,due_date:e.target.value}))} type="date" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+              </div>
+              <div className="flex gap-3">
+                <input value={form.due_time} onChange={e => setForm(p=>({...p,due_time:e.target.value}))} type="time" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                <select value={form.reminder_minutes} onChange={e => setForm(p=>({...p,reminder_minutes:e.target.value}))} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                  <option value="">🔔 No reminder</option>
+                  <option value="0">At due time</option>
+                  <option value="30">30 min before</option>
+                  <option value="60">1 hour before</option>
+                  <option value="1440">1 day before</option>
+                </select>
               </div>
               <div className="flex gap-2">
                 <button onClick={handleAddChore} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save"}</button>

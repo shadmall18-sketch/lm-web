@@ -34,6 +34,7 @@ export default function FitnessPage() {
   const [recurEnd, setRecurEnd] = useState('')
   const [blockLabel, setBlockLabel] = useState('Workout')
   const [workoutPoints, setWorkoutPoints] = useState('0')
+  const [reminderMins, setReminderMins] = useState('')
   const [members, setMembers] = useState<any[]>([])
 
   // visibility prompt
@@ -148,6 +149,7 @@ export default function FitnessPage() {
       scheduled_date: d, scheduled_time: schedTime || null,
       visibility, show_on_calendar: true,
       points_value: parseInt(workoutPoints) || 0,
+      reminder_minutes: reminderMins ? parseInt(reminderMins) : null,
       recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
       recurrence_end: recurEnd || null, series_id: sid,
     }))
@@ -165,6 +167,7 @@ export default function FitnessPage() {
       scheduled_date: d, scheduled_time: schedTime || null,
       is_time_block: true, visibility: 'private', show_on_calendar: true,
       points_value: parseInt(workoutPoints) || 0,
+      reminder_minutes: reminderMins ? parseInt(reminderMins) : null,
       recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
       recurrence_end: recurEnd || null, series_id: sid,
     }))
@@ -183,7 +186,7 @@ export default function FitnessPage() {
 
   const resetPanel = () => {
     setShowAdd(false); setSearch(''); setCustomName(''); setCustomCals('')
-    setRecurrence('none'); setRecurDays([]); setRecurEnd(''); setBlockLabel('Workout'); setWorkoutPoints('0')
+    setRecurrence('none'); setRecurDays([]); setRecurEnd(''); setBlockLabel('Workout'); setWorkoutPoints('0'); setReminderMins('')
   }
 
   const awardWorkoutPoints = async (w: any, missed: boolean) => {
@@ -342,6 +345,16 @@ export default function FitnessPage() {
                 <span className="text-xs text-[#94A3B8] w-16">Points</span>
                 <input type="number" value={workoutPoints} onChange={e => setWorkoutPoints(e.target.value)} placeholder="0" className="w-24 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
                 {parseInt(workoutPoints) > 0 && <span className="text-xs text-[#475569]">+{workoutPoints} done · −{Math.round(parseInt(workoutPoints)/2)} missed</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#94A3B8] w-16">🔔 Remind</span>
+                <select value={reminderMins} onChange={e => setReminderMins(e.target.value)} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                  <option value="">No reminder</option>
+                  <option value="0">At start time</option>
+                  <option value="15">15 min before</option>
+                  <option value="30">30 min before</option>
+                  <option value="60">1 hour before</option>
+                </select>
               </div>
             </div>
           )}

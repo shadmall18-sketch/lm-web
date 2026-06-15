@@ -12,7 +12,7 @@ export default function CalendarPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selected, setSelected] = useState(new Date())
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({ title: '', location: '', category: 'family' })
+  const [form, setForm] = useState({ title: '', location: '', category: 'family', event_time: '09:00', reminder_minutes: '' })
 
   const load = async () => {
     const y = currentMonth.getFullYear(), m = currentMonth.getMonth()
@@ -57,9 +57,17 @@ export default function CalendarPage() {
 
   const handleAdd = async () => {
     if (!form.title) return
-    const start = new Date(selected); start.setHours(9,0,0)
-    await supabase.from('calendar_events').insert({ ...form, start_time: start.toISOString(), color: CAT_COLORS[form.category], family_id: await getFamilyId(), created_by: (await supabase.auth.getUser()).data.user?.id })
-    setShowAdd(false); setForm({ title:'', location:'', category:'family' }); load()
+    const start = new Date(selected)
+    const [h, m] = (form.event_time || '09:00').split(':').map(Number)
+    start.setHours(h, m, 0, 0)
+    await supabase.from('calendar_events').insert({
+      title: form.title, location: form.location, category: form.category,
+      start_time: start.toISOString(), color: CAT_COLORS[form.category],
+      reminder_minutes: form.reminder_minutes ? parseInt(form.reminder_minutes) : null,
+      visibility: form.category === 'family' ? 'family' : 'personal',
+      family_id: await getFamilyId(), created_by: (await supabase.auth.getUser()).data.user?.id
+    })
+    setShowAdd(false); setForm({ title:'', location:'', category:'family', event_time:'09:00', reminder_minutes:'' }); load()
   }
 
   const getFamilyId = async () => {
@@ -111,6 +119,23 @@ export default function CalendarPage() {
           <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-4 space-y-3">
             <input value={form.title} onChange={e => setForm(p=>({...p,title:e.target.value}))} placeholder="Event title" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
             <input value={form.location} onChange={e => setForm(p=>({...p,location:e.target.value}))} placeholder="Location (optional)" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="text-xs text-[#94A3B8] block mb-1">Time</label>
+                <input type="time" value={form.event_time} onChange={e => setForm(p=>({...p,event_time:e.target.value}))} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-[#94A3B8] block mb-1">🔔 Remind</label>
+                <select value={form.reminder_minutes} onChange={e => setForm(p=>({...p,reminder_minutes:e.target.value}))} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                  <option value="">No reminder</option>
+                  <option value="0">At start time</option>
+                  <option value="15">15 min before</option>
+                  <option value="30">30 min before</option>
+                  <option value="60">1 hour before</option>
+                  <option value="1440">1 day before</option>
+                </select>
+              </div>
+            </div>
             <div className="flex gap-2 flex-wrap">
               {Object.keys(CAT_COLORS).map(cat => (
                 <button key={cat} onClick={() => setForm(p=>({...p,category:cat}))} className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${form.category===cat ? 'text-white' : 'bg-[#0F172A] text-[#94A3B8]'}`} style={form.category===cat ? {backgroundColor: CAT_COLORS[cat]} : {}}>{cat}</button>
