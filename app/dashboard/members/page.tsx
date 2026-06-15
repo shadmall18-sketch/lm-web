@@ -115,10 +115,9 @@ export default function MembersPage() {
                 <div className="text-sm text-[#64748B]">{m.email}</div>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <span className={`text-xs font-bold px-2 py-1 rounded-lg ${m.role === 'admin' ? 'bg-[#312E81] text-[#A5B4FC]' : 'bg-[#1E293B] text-[#64748B] border border-[#334155]'}`}>
-                  {m.role}
+                <span className={`text-xs font-bold px-2 py-1 rounded-lg ${m.is_child ? 'bg-[#2E1B5E] text-[#C4B5FD]' : 'bg-[#312E81] text-[#A5B4FC]'}`}>
+                  {m.is_child ? 'Child' : 'Adult'}
                 </span>
-                {m.is_child && <span className="text-xs text-[#7C3AED] font-semibold">child</span>}
                 <span className="text-xs font-bold text-[#6366F1]">{m.points_balance} pts</span>
               </div>
             </div>
@@ -160,12 +159,12 @@ export default function MembersPage() {
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide block mb-2">Role</label>
+              <label className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wide block mb-2">Type</label>
               <div className="flex gap-2">
-                <button onClick={() => { setInviteRole('member'); setIsChild(false) }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${inviteRole === 'member' && !isChild ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Adult Member</button>
-                <button onClick={() => { setInviteRole('admin'); setIsChild(false) }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${inviteRole === 'admin' ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Admin</button>
+                <button onClick={() => { setInviteRole('admin'); setIsChild(false) }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${!isChild ? 'bg-[#6366F1] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Adult</button>
                 <button onClick={() => { setInviteRole('member'); setIsChild(true) }} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${isChild ? 'bg-[#7C3AED] text-white' : 'bg-[#0F172A] text-[#64748B] border border-[#334155]'}`}>Child</button>
               </div>
+              <p className="text-xs text-[#475569] mt-2">{isChild ? 'Kids can earn points and need a parent to verify chores and workouts.' : 'Adults have full control of the family.'}</p>
             </div>
 
             <button
