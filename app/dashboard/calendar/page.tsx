@@ -18,6 +18,11 @@ export default function CalendarPage() {
     const y = currentMonth.getFullYear(), m = currentMonth.getMonth()
     const fromDate = new Date(y,m,1).toISOString()
     const toDate = new Date(y,m+1,0).toISOString()
+    // Last actual day of this month (handles 28/29/30/31)
+    const lastDay = new Date(y, m+1, 0).getDate()
+    const monthStart = `${y}-${String(m+1).padStart(2,'0')}-01`
+    const monthEnd = `${y}-${String(m+1).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`
+
     const { data } = await supabase.from('calendar_events')
       .select('*').gte('start_time', fromDate).lte('start_time', toDate)
 
@@ -26,8 +31,8 @@ export default function CalendarPage() {
     const { data: workouts } = await supabase.from('planned_workouts')
       .select('*')
       .eq('show_on_calendar', true)
-      .gte('scheduled_date', `${y}-${String(m+1).padStart(2,'0')}-01`)
-      .lte('scheduled_date', `${y}-${String(m+1).padStart(2,'0')}-31`)
+      .gte('scheduled_date', monthStart)
+      .lte('scheduled_date', monthEnd)
 
     // Convert workouts to event-like objects
     const workoutEvents = (workouts ?? [])
@@ -52,8 +57,8 @@ export default function CalendarPage() {
     const { data: chores } = await supabase.from('chores')
       .select('*, assigned_user:users!assigned_to(display_name)')
       .not('due_date', 'is', null)
-      .gte('due_date', `${y}-${String(m+1).padStart(2,'0')}-01`)
-      .lte('due_date', `${y}-${String(m+1).padStart(2,'0')}-31`)
+      .gte('due_date', monthStart)
+      .lte('due_date', monthEnd)
 
     const choreEvents = (chores ?? []).map((c: any) => ({
       id: `chore-${c.id}`,
