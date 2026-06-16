@@ -12,7 +12,8 @@ export default function ChoresPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showAddReward, setShowAddReward] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'' })
+  const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'', recurrence:'none', recurrence_end:'' })
+  const [recurDays, setRecurDays] = useState<number[]>([])
   const [rewardForm, setRewardForm] = useState({ title:'', points_cost:'50', description:'' })
 
   const load = async () => {
@@ -91,14 +92,53 @@ export default function ChoresPage() {
     load()
   }
 
+  const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+  const toggleDay = (d: number) => setRecurDays(p => p.includes(d) ? p.filter(x => x !== d) : [...p, d])
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+
+  const buildChoreDates = (startDate: string): string[] => {
+    const rec = form.recurrence
+    if (rec === 'none') return [startDate]
+    const dates: string[] = []
+    const start = new Date(startDate + 'T00:00:00')
+    const end = form.recurrence_end ? new Date(form.recurrence_end + 'T00:00:00') : new Date(start.getTime() + 90*24*60*60*1000)
+    let cursor = new Date(start)
+    let iter = 0
+    while (cursor <= end && iter < 500) {
+      iter++
+      const dow = cursor.getDay()
+      const dateStr = fmt(cursor)
+      const daysSinceStart = Math.round((cursor.getTime() - start.getTime()) / (24*60*60*1000))
+      if (rec === 'daily') dates.push(dateStr)
+      else if (rec === 'every_other_day') { if (daysSinceStart % 2 === 0) dates.push(dateStr) }
+      else if (rec === 'weekly') { if (dow === start.getDay()) dates.push(dateStr) }
+      else if (rec === 'every_other_week') { if (dow === start.getDay() && (Math.floor(daysSinceStart/7) % 2 === 0)) dates.push(dateStr) }
+      else if (rec === 'custom_days') { if (recurDays.includes(dow)) dates.push(dateStr) }
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return dates
+  }
+
   const handleAddChore = async () => {
     if (!form.title || !form.assigned_to || saving) return
+    if (form.recurrence === 'custom_days' && recurDays.length === 0) { alert('Pick at least one day of the week.'); return }
+    if (form.recurrence !== 'none' && !form.due_date) { alert('Pick a start date for the repeating chore.'); return }
     setSaving(true)
     try {
       const { data: u } = await supabase.auth.getUser()
       const fid = await getFamilyId()
-      await supabase.from('chores').insert({ title: form.title, points_value: parseInt(form.points_value)||0, assigned_to: form.assigned_to, due_date: form.due_date||null, due_time: form.due_time||null, reminder_minutes: form.reminder_minutes ? parseInt(form.reminder_minutes) : null, family_id: fid, created_by: u.user!.id })
-      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'' }); load()
+      const dates = form.due_date ? buildChoreDates(form.due_date) : [null]
+      const sid = dates.length > 1 ? crypto.randomUUID() : null
+      const rows = dates.map(d => ({
+        title: form.title, points_value: parseInt(form.points_value)||0,
+        assigned_to: form.assigned_to, due_date: d, due_time: form.due_time||null,
+        reminder_minutes: form.reminder_minutes ? parseInt(form.reminder_minutes) : null,
+        recurrence: form.recurrence, recurrence_days: form.recurrence === 'custom_days' ? recurDays : null,
+        recurrence_end: form.recurrence_end || null, series_id: sid,
+        family_id: fid, created_by: u.user!.id,
+      }))
+      await supabase.from('chores').insert(rows)
+      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'', recurrence:'none', recurrence_end:'' }); setRecurDays([]); load()
     } finally {
       setSaving(false)
     }
@@ -162,6 +202,31 @@ export default function ChoresPage() {
                   <option value="1440">1 day before</option>
                 </select>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#94A3B8] w-16">Repeat</span>
+                <select value={form.recurrence} onChange={e => setForm(p=>({...p,recurrence:e.target.value}))} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                  <option value="none">Doesn't repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="every_other_day">Every other day</option>
+                  <option value="weekly">Weekly (same weekday)</option>
+                  <option value="every_other_week">Every other week</option>
+                  <option value="custom_days">Specific days of week</option>
+                </select>
+              </div>
+              {form.recurrence === 'custom_days' && (
+                <div className="flex gap-1 flex-wrap">
+                  {WEEKDAYS.map((d, i) => (
+                    <button key={i} onClick={() => toggleDay(i)} className={`w-9 h-9 rounded-full text-xs font-semibold ${recurDays.includes(i)?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#64748B]'}`}>{d[0]}</button>
+                  ))}
+                </div>
+              )}
+              {form.recurrence !== 'none' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[#94A3B8] w-16">Until</span>
+                  <input type="date" value={form.recurrence_end} onChange={e => setForm(p=>({...p,recurrence_end:e.target.value}))} className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                  <span className="text-xs text-[#475569]">(blank = 90 days)</span>
+                </div>
+              )}
               <div className="flex gap-2">
                 <button onClick={handleAddChore} disabled={saving} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg disabled:opacity-50">{saving?"Saving...":"Save"}</button>
                 <button onClick={() => setShowAdd(false)} className="text-[#64748B] text-sm px-4 py-2 rounded-lg hover:bg-[#0F172A]">Cancel</button>
