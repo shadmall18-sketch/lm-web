@@ -76,7 +76,9 @@ export default function CalendarPage() {
       id: `chore-${c.id}`,
       title: c.title,
       date_key: c.due_date,
-      start_time: `${c.due_date}T${c.due_time ?? '09:00:00'}`,
+      // timeless chores sort first (00:00) and show "All day"
+      start_time: `${c.due_date}T${c.due_time ?? '00:00:00'}`,
+      allDay: !c.due_time,
       color: c.status === 'completed' ? '#10B981' : '#EC4899',
       sub: c.assigned_user?.display_name ?? '',
       kind: 'chore',
@@ -178,8 +180,8 @@ export default function CalendarPage() {
                 <span className={`text-xs font-semibold px-1 ${isToday ? 'text-white bg-[#6366F1] rounded-full w-5 h-5 flex items-center justify-center' : dim ? 'text-[#475569]' : 'text-[#94A3B8]'}`}>{d.getDate()}</span>
                 <div className="flex flex-col gap-0.5 mt-0.5 overflow-hidden">
                   {dayEvents.slice(0, maxBars).map(e => (
-                    <div key={e.id} className="rounded px-1 py-0.5 text-[9px] leading-tight font-medium text-white truncate" style={{backgroundColor: e.color}} title={`${timeLabel(e.start_time)} ${e.title}`}>
-                      <span className="opacity-80">{timeLabel(e.start_time)}</span> {e.title}
+                    <div key={e.id} className="rounded px-1 py-0.5 text-[9px] leading-tight font-medium text-white truncate" style={{backgroundColor: e.color}} title={`${e.allDay ? 'All day' : timeLabel(e.start_time)} ${e.title}`}>
+                      <span className="opacity-80">{e.allDay ? '○' : timeLabel(e.start_time)}</span> {e.title}
                     </div>
                   ))}
                   {dayEvents.length > maxBars && <div className="text-[9px] text-[#64748B] px-1">+{dayEvents.length - maxBars} more</div>}
@@ -241,7 +243,7 @@ export default function CalendarPage() {
                     </div>
                     {e.sub && <div className="text-sm text-[#64748B]">{e.kind === 'chore' ? '👤' : e.kind === 'workout' ? '🔥' : '📍'} {e.sub}</div>}
                   </div>
-                  <span className="text-xs text-[#64748B]">{timeLabel(e.start_time)}</span>
+                  <span className="text-xs text-[#64748B]">{e.allDay ? 'All day' : timeLabel(e.start_time)}</span>
                 </div>
               ))
           }

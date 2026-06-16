@@ -2,6 +2,20 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
+// 15-min increments, 12-hour labels
+const TIME_OPTIONS: { value: string; label: string }[] = (() => {
+  const out: { value: string; label: string }[] = []
+  for (let h = 0; h < 24; h++) {
+    for (const min of [0, 15, 30, 45]) {
+      const value = `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`
+      let hh = h % 12; if (hh === 0) hh = 12
+      const ampm = h < 12 ? 'AM' : 'PM'
+      out.push({ value, label: `${hh}:${String(min).padStart(2,'0')} ${ampm}` })
+    }
+  }
+  return out
+})()
+
 export default function ChoresPage() {
   const supabase = createClient()
   const [user, setUser] = useState<any>(null)
@@ -14,6 +28,7 @@ export default function ChoresPage() {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'', recurrence:'none', recurrence_end:'' })
   const [recurDays, setRecurDays] = useState<number[]>([])
+  const [anyTime, setAnyTime] = useState(true)
   const [rewardForm, setRewardForm] = useState({ title:'', points_cost:'50', description:'' })
 
   const load = async () => {
@@ -131,14 +146,14 @@ export default function ChoresPage() {
       const sid = dates.length > 1 ? crypto.randomUUID() : null
       const rows = dates.map(d => ({
         title: form.title, points_value: parseInt(form.points_value)||0,
-        assigned_to: form.assigned_to, due_date: d, due_time: form.due_time||null,
-        reminder_minutes: form.reminder_minutes ? parseInt(form.reminder_minutes) : null,
+        assigned_to: form.assigned_to, due_date: d, due_time: anyTime ? null : (form.due_time || null),
+        reminder_minutes: (!anyTime && form.reminder_minutes) ? parseInt(form.reminder_minutes) : null,
         recurrence: form.recurrence, recurrence_days: form.recurrence === 'custom_days' ? recurDays : null,
         recurrence_end: form.recurrence_end || null, series_id: sid,
         family_id: fid, created_by: u.user!.id,
       }))
       await supabase.from('chores').insert(rows)
-      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'', recurrence:'none', recurrence_end:'' }); setRecurDays([]); load()
+      setShowAdd(false); setForm({ title:'', points_value:'10', assigned_to:'', due_date:'', due_time:'', reminder_minutes:'', recurrence:'none', recurrence_end:'' }); setRecurDays([]); setAnyTime(true); load()
     } finally {
       setSaving(false)
     }
@@ -192,16 +207,25 @@ export default function ChoresPage() {
                 <input value={form.points_value} onChange={e => setForm(p=>({...p,points_value:e.target.value}))} placeholder="Points" type="number" className="w-24 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
                 <input value={form.due_date} onChange={e => setForm(p=>({...p,due_date:e.target.value}))} type="date" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
               </div>
-              <div className="flex gap-3">
-                <input value={form.due_time} onChange={e => setForm(p=>({...p,due_time:e.target.value}))} type="time" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
-                <select value={form.reminder_minutes} onChange={e => setForm(p=>({...p,reminder_minutes:e.target.value}))} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
-                  <option value="">🔔 No reminder</option>
-                  <option value="0">At due time</option>
-                  <option value="30">30 min before</option>
-                  <option value="60">1 hour before</option>
-                  <option value="1440">1 day before</option>
-                </select>
-              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={anyTime} onChange={e => setAnyTime(e.target.checked)} className="w-4 h-4 accent-[#6366F1]" />
+                <span className="text-sm text-[#F1F5F9]">Any time that day (no set time)</span>
+              </label>
+              {!anyTime && (
+                <div className="flex gap-3">
+                  <select value={form.due_time} onChange={e => setForm(p=>({...p,due_time:e.target.value}))} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                    <option value="">Pick a time...</option>
+                    {TIME_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                  <select value={form.reminder_minutes} onChange={e => setForm(p=>({...p,reminder_minutes:e.target.value}))} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
+                    <option value="">🔔 No reminder</option>
+                    <option value="0">At due time</option>
+                    <option value="30">30 min before</option>
+                    <option value="60">1 hour before</option>
+                    <option value="1440">1 day before</option>
+                  </select>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[#94A3B8] w-16">Repeat</span>
                 <select value={form.recurrence} onChange={e => setForm(p=>({...p,recurrence:e.target.value}))} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]">
