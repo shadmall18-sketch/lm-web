@@ -18,6 +18,13 @@ export default function FitnessPage() {
   const [planned, setPlanned] = useState<any[]>([])
   const [meals, setMeals] = useState<any[]>([])
   const [date, setDate] = useState(TODAY)
+  const [section, setSection] = useState<'today'|'calendar'|'stats'>('today')
+  const [monthWorkouts, setMonthWorkouts] = useState<any[]>([])
+  const [monthMeals, setMonthMeals] = useState<any[]>([])
+  const [calMonth, setCalMonth] = useState(new Date())
+  const [statPeriod, setStatPeriod] = useState<'week'|'month'>('week')
+  const [editingW, setEditingW] = useState<any>(null)
+  const [editWForm, setEditWForm] = useState<any>(null)
 
   // Add panel state
   const [showAdd, setShowAdd] = useState(false)
@@ -80,6 +87,74 @@ export default function FitnessPage() {
   }
 
   useEffect(() => { load() }, [date])
+
+  const fmtLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+
+  // Load a wide window for stats + calendar (prev/this/next month)
+  const loadRange = async () => {
+    const { data: sess } = await supabase.auth.getSession()
+    if (!sess.session) return
+    const userId = sess.session.user.id
+    const y = calMonth.getFullYear(), m = calMonth.getMonth()
+    const rangeStart = fmtLocal(new Date(y, m-1, 1))
+    const rangeEnd = fmtLocal(new Date(y, m+2, 0))
+    const [{ data: w }, { data: ml }] = await Promise.all([
+      supabase.from('planned_workouts').select('*').gte('scheduled_date', rangeStart).lte('scheduled_date', rangeEnd),
+      supabase.from('planned_meals').select('*').eq('user_id', userId).gte('planned_date', rangeStart).lte('planned_date', rangeEnd),
+    ])
+    setMonthWorkouts((w ?? []).filter((x:any) => x.user_id === userId || x.visibility === 'family'))
+    setMonthMeals(ml ?? [])
+  }
+  useEffect(() => { loadRange() }, [calMonth, date])
+
+  // Period ranges
+  const periodRange = () => {
+    const now = new Date()
+    if (statPeriod === 'week') {
+      const start = new Date(now); start.setDate(now.getDate() - now.getDay()); start.setHours(0,0,0,0)
+      const end = new Date(start); end.setDate(start.getDate()+6); end.setHours(23,59,59,999)
+      return { start, end, daysTotal: 7 }
+    }
+    const start = new Date(now.getFullYear(), now.getMonth(), 1)
+    const end = new Date(now.getFullYear(), now.getMonth()+1, 0); end.setHours(23,59,59,999)
+    return { start, end, daysTotal: end.getDate() }
+  }
+
+  const statsData = () => {
+    const { start, end, daysTotal } = periodRange()
+    const inRange = (ds: string) => { const d = new Date(ds+'T12:00:00'); return d >= start && d <= end }
+    const wk = monthWorkouts.filter(w => inRange(w.scheduled_date))
+    const ml = monthMeals.filter(m => inRange(m.planned_date))
+    const burnedDone = wk.filter(w => w.completed).reduce((s,w) => s + (w.calories ?? 0), 0)
+    const burnedPlanned = wk.reduce((s,w) => s + (w.calories ?? 0), 0) // all scheduled (incl. not yet done)
+    const consumed = ml.reduce((s,m) => s + (m.calories ?? 0), 0)
+    // days elapsed so far in the period
+    const now = new Date()
+    const msDay = 24*60*60*1000
+    const daysElapsed = Math.min(daysTotal, Math.max(1, Math.floor((now.getTime() - start.getTime())/msDay) + 1))
+    // projected = current daily average * total days
+    const projConsumed = Math.round(consumed / daysElapsed * daysTotal)
+    const projBurned = Math.round(burnedDone / daysElapsed * daysTotal)
+    return { burnedDone, burnedPlanned, consumed, projConsumed, projBurned, daysElapsed, daysTotal }
+  }
+
+  const workoutsForCal = (ds: string) => monthWorkouts.filter(w => w.scheduled_date === ds).sort((a,b) => (a.scheduled_time||'').localeCompare(b.scheduled_time||''))
+
+  // Edit a workout
+  const openEditW = (w: any) => {
+    setEditingW(w)
+    setEditWForm({ custom_name: w.custom_name, calories: String(w.calories ?? ''), points_value: String(w.points_value ?? 0), scheduled_time: w.scheduled_time ?? '', scheduled_date: w.scheduled_date ?? '' })
+  }
+  const saveEditW = async () => {
+    await supabase.from('planned_workouts').update({
+      custom_name: editWForm.custom_name,
+      calories: editWForm.calories ? parseInt(editWForm.calories) : null,
+      points_value: parseInt(editWForm.points_value) || 0,
+      scheduled_time: editWForm.scheduled_time || null,
+      scheduled_date: editWForm.scheduled_date || null,
+    }).eq('id', editingW.id)
+    setEditingW(null); setEditWForm(null); load(); loadRange()
+  }
 
   const toggleFav = async (exId: string, e: any) => {
     e.stopPropagation()
@@ -292,11 +367,18 @@ export default function FitnessPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold text-[#F1F5F9]">Fitness</h1>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="bg-[#1E293B] border border-[#334155] rounded-xl px-4 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+        {section==='today' && <input type="date" value={date} onChange={e => setDate(e.target.value)} className="bg-[#1E293B] border border-[#334155] rounded-xl px-4 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />}
       </div>
 
+      <div className="flex bg-[#1E293B] rounded-lg p-1 mb-6 border border-[#334155]">
+        {(['today','calendar','stats'] as const).map(s => (
+          <button key={s} onClick={() => setSection(s)} className={`flex-1 py-2 rounded-md text-xs font-semibold ${section===s?'bg-[#6366F1] text-white':'text-[#64748B]'}`}>{s==='today'?'Today':s==='calendar'?'Calendar':'Stats'}</button>
+        ))}
+      </div>
+
+      {section==='today' && (<>
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#F59E0B]">
           <div className="text-xs text-[#64748B] uppercase font-semibold">Burned</div>
@@ -498,12 +580,116 @@ export default function FitnessPage() {
                 <button onClick={() => markMissed(w)} className="text-red-400 border border-red-500/40 text-xs font-bold px-2 py-1 rounded">Missed</button>
               )}
               {w.calories != null && <span className="text-sm font-bold text-[#F59E0B]">{w.calories} cal</span>}
+              <button onClick={() => openEditW(w)} className="text-[#64748B] hover:text-[#F1F5F9] text-sm">✏️</button>
               <button onClick={() => removeWorkout(w)} className="text-[#64748B] hover:text-red-400 text-sm">✕</button>
             </div>
           </div>
         ))}
         {planned.length === 0 && <div className="text-center text-[#475569] italic py-8">Nothing yet — add a workout above</div>}
       </div>
+      </>)}
+
+      {section==='calendar' && (
+        <WorkoutCalendar calMonth={calMonth} setCalMonth={setCalMonth} workoutsForCal={workoutsForCal} fmtLocal={fmtLocal} onEdit={openEditW} />
+      )}
+
+      {section==='stats' && (() => {
+        const s = statsData()
+        const net = s.consumed - s.burnedDone
+        const projNet = s.projConsumed - s.projBurned
+        return (
+          <div className="space-y-5">
+            <div className="flex bg-[#1E293B] rounded-lg p-1 border border-[#334155] w-fit">
+              {(['week','month'] as const).map(p => (
+                <button key={p} onClick={() => setStatPeriod(p)} className={`px-4 py-1.5 rounded-md text-xs font-semibold ${statPeriod===p?'bg-[#6366F1] text-white':'text-[#64748B]'}`}>This {p}</button>
+              ))}
+            </div>
+
+            <div>
+              <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide mb-2">So far this {statPeriod} ({s.daysElapsed} of {s.daysTotal} days)</div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#F59E0B]">
+                  <div className="text-xs text-[#64748B] uppercase font-semibold">Burned</div>
+                  <div className="text-2xl font-black text-[#F59E0B] mt-1">{s.burnedDone}</div>
+                </div>
+                <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#10B981]">
+                  <div className="text-xs text-[#64748B] uppercase font-semibold">Consumed</div>
+                  <div className="text-2xl font-black text-[#10B981] mt-1">{s.consumed}</div>
+                </div>
+                <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4" style={{borderColor: net>0?'#6366F1':'#10B981'}}>
+                  <div className="text-xs text-[#64748B] uppercase font-semibold">Net</div>
+                  <div className="text-2xl font-black mt-1" style={{color: net>0?'#6366F1':'#10B981'}}>{net>0?'+':''}{net}</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="text-xs font-bold text-[#64748B] uppercase tracking-wide mb-2">Projected full {statPeriod} (at current pace)</div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-[#1E293B]/60 rounded-2xl p-4 border-l-4 border-[#F59E0B]/50">
+                  <div className="text-xs text-[#64748B] uppercase font-semibold">Burned</div>
+                  <div className="text-2xl font-black text-[#F59E0B] mt-1">{s.projBurned}</div>
+                </div>
+                <div className="bg-[#1E293B]/60 rounded-2xl p-4 border-l-4 border-[#10B981]/50">
+                  <div className="text-xs text-[#64748B] uppercase font-semibold">Consumed</div>
+                  <div className="text-2xl font-black text-[#10B981] mt-1">{s.projConsumed}</div>
+                </div>
+                <div className="bg-[#1E293B]/60 rounded-2xl p-4 border-l-4" style={{borderColor: projNet>0?'#6366F1':'#10B981'}}>
+                  <div className="text-xs text-[#64748B] uppercase font-semibold">Net</div>
+                  <div className="text-2xl font-black mt-1" style={{color: projNet>0?'#6366F1':'#10B981'}}>{projNet>0?'+':''}{projNet}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[#1E1B4B]/30 border border-[#6366F1]/30 rounded-xl p-4 text-sm text-[#A5B4FC]">
+              {projNet > 0
+                ? <>You're trending toward a <span className="font-bold">surplus of {projNet} cal</span> this {statPeriod}. To balance it out, that's about <span className="font-bold">{Math.ceil(projNet / 400)}</span> more workout{Math.ceil(projNet/400)===1?'':'s'} (~400 cal each) to add.</>
+                : <>You're trending toward a <span className="font-bold">deficit of {Math.abs(projNet)} cal</span> this {statPeriod} — burning more than you're eating at the current pace.</>}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Edit workout modal (works from any section) */}
+      {editingW && editWForm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => { setEditingW(null); setEditWForm(null) }}>
+          <div className="bg-[#1E293B] border border-[#334155] rounded-2xl p-5 max-w-md w-full" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-[#F1F5F9] mb-4">Edit workout</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-[#94A3B8] block mb-1">Workout</label>
+                <input value={editWForm.custom_name} onChange={e => setEditWForm((p:any)=>({...p,custom_name:e.target.value}))} className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-[#94A3B8] block mb-1">Calories</label>
+                  <input value={editWForm.calories} onChange={e => setEditWForm((p:any)=>({...p,calories:e.target.value}))} type="number" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-[#94A3B8] block mb-1">Points</label>
+                  <input value={editWForm.points_value} onChange={e => setEditWForm((p:any)=>({...p,points_value:e.target.value}))} type="number" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-[#94A3B8] block mb-1">Date</label>
+                  <input value={editWForm.scheduled_date} onChange={e => setEditWForm((p:any)=>({...p,scheduled_date:e.target.value}))} type="date" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-[#94A3B8] block mb-1">Time</label>
+                  <input value={editWForm.scheduled_time ? editWForm.scheduled_time.slice(0,5) : ''} onChange={e => setEditWForm((p:any)=>({...p,scheduled_time:e.target.value}))} type="time" className="w-full bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+                </div>
+              </div>
+            </div>
+            {editingW.series_id && <p className="text-xs text-[#F59E0B] mt-3">🔁 Part of a repeating series. Edits apply to this one occurrence.</p>}
+            <div className="flex gap-2 mt-5">
+              <button onClick={saveEditW} className="bg-[#6366F1] text-white text-sm font-bold px-4 py-2 rounded-lg">Save changes</button>
+              <button onClick={() => { removeWorkout(editingW); setEditingW(null); setEditWForm(null) }} className="bg-[#1E293B] border border-red-500/40 text-red-400 text-sm font-bold px-4 py-2 rounded-lg">Delete</button>
+              <button onClick={() => { setEditingW(null); setEditWForm(null) }} className="text-[#64748B] text-sm px-4 py-2 rounded-lg ml-auto">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -537,6 +723,62 @@ function FillBlockModal({ exercises, onClose, onSave }: any) {
           </div>
         </div>
         <button onClick={onClose} className="w-full mt-3 text-[#64748B] text-sm py-2">Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+const WC_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const WC_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+
+function wcTime(t: string) {
+  if (!t) return ''
+  let [h, m] = t.split(':').map(Number)
+  const ampm = h >= 12 ? 'pm' : 'am'; h = h % 12; if (h===0) h=12
+  return `${h}:${String(m).padStart(2,'0')}${ampm}`
+}
+
+function WorkoutCalendar({ calMonth, setCalMonth, workoutsForCal, fmtLocal, onEdit }: any) {
+  const y = calMonth.getFullYear(), m = calMonth.getMonth()
+  const first = new Date(y, m, 1)
+  const startPad = first.getDay()
+  const totalDays = new Date(y, m+1, 0).getDate()
+  const gridStart = new Date(first); gridStart.setDate(1 - startPad)
+  const totalCells = Math.ceil((startPad + totalDays) / 7) * 7
+  const cells: Date[] = []
+  for (let i=0;i<totalCells;i++){ const d = new Date(gridStart); d.setDate(gridStart.getDate()+i); cells.push(d) }
+  const todayStr = fmtLocal(new Date())
+
+  return (
+    <div className="bg-[#1E293B] rounded-2xl border border-[#334155] overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-[#334155]">
+        <button onClick={() => setCalMonth(new Date(y, m-1, 1))} className="text-2xl text-[#6366F1] px-3 hover:bg-[#0F172A] rounded-lg">‹</button>
+        <span className="font-bold text-[#F1F5F9]">{WC_MONTHS[m]} {y}</span>
+        <button onClick={() => setCalMonth(new Date(y, m+1, 1))} className="text-2xl text-[#6366F1] px-3 hover:bg-[#0F172A] rounded-lg">›</button>
+      </div>
+      <div className="grid grid-cols-7 border-b border-[#334155]">
+        {WC_DAYS.map(d => <div key={d} className="text-center text-xs text-[#64748B] py-2 font-semibold">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7">
+        {cells.map((d, i) => {
+          const ds = fmtLocal(d)
+          const dayW = workoutsForCal(ds)
+          const dim = d.getMonth() !== m
+          const isToday = ds === todayStr
+          return (
+            <div key={i} className="min-h-[84px] p-1 flex flex-col border border-[#334155]/30">
+              <span className={`text-xs font-semibold px-1 ${isToday ? 'text-white bg-[#F59E0B] rounded-full w-5 h-5 flex items-center justify-center' : dim ? 'text-[#475569]' : 'text-[#94A3B8]'}`}>{d.getDate()}</span>
+              <div className="flex flex-col gap-0.5 mt-0.5 overflow-hidden">
+                {dayW.slice(0,3).map((w: any) => (
+                  <button key={w.id} onClick={() => onEdit(w)} className={`rounded px-1 py-0.5 text-[9px] leading-tight font-medium text-white truncate text-left ${w.completed?'opacity-50':''}`} style={{backgroundColor: w.is_time_block ? '#A5B4FC' : '#F59E0B'}} title={w.custom_name}>
+                    {w.scheduled_time ? wcTime(w.scheduled_time)+' ' : ''}{w.custom_name}
+                  </button>
+                ))}
+                {dayW.length > 3 && <div className="text-[9px] text-[#64748B] px-1">+{dayW.length-3} more</div>}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
