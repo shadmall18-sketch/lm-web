@@ -47,6 +47,9 @@ export default function CalendarPage() {
     const { data: chores } = await supabase.from('chores')
       .select('*, assigned_user:users!assigned_to(display_name)').not('due_date', 'is', null).gte('due_date', startStr).lte('due_date', endStr)
 
+    const { data: mealsData } = await supabase.from('planned_meals')
+      .select('*').or(`user_id.eq.${u.user?.id},and(visibility.eq.family)`).gte('planned_date', startStr).lte('planned_date', endStr)
+
     const calEvents = (data ?? []).map((e: any) => {
       const d = new Date(e.start_time)
       return {
@@ -84,7 +87,21 @@ export default function CalendarPage() {
       kind: 'chore',
     }))
 
-    setEvents([...calEvents, ...workoutEvents, ...choreEvents])
+    const mealColor: Record<string,string> = { Breakfast:'#F59E0B', Lunch:'#10B981', Dinner:'#6366F1', Snack:'#EC4899' }
+    const mealEvents = (mealsData ?? [])
+      .filter((m:any) => m.user_id === u.user?.id || m.visibility === 'family')
+      .map((m: any) => ({
+        id: `meal-${m.id}`,
+        title: m.is_placeholder ? `${m.meal_type} (plan)` : m.custom_name,
+        date_key: m.planned_date,
+        start_time: `${m.planned_date}T${m.meal_time ?? '00:00:00'}`,
+        allDay: !m.meal_time,
+        color: mealColor[m.meal_type] ?? '#64748B',
+        sub: m.meal_type + (m.track_calories!==false && m.calories ? ` · ${m.calories} cal` : ''),
+        kind: 'meal',
+      }))
+
+    setEvents([...calEvents, ...workoutEvents, ...choreEvents, ...mealEvents])
   }
 
   useEffect(() => { load() }, [anchor])
@@ -239,9 +256,9 @@ export default function CalendarPage() {
                   <div className="w-1 h-10 rounded-full flex-shrink-0" style={{backgroundColor: e.color}} />
                   <div className="flex-1">
                     <div className="font-semibold text-[#F1F5F9]">
-                      {e.kind==='workout' ? '💪 ' : e.kind==='chore' ? '✅ ' : ''}{e.title}
+                      {e.kind==='workout' ? '💪 ' : e.kind==='chore' ? '✅ ' : e.kind==='meal' ? '🍽️ ' : ''}{e.title}
                     </div>
-                    {e.sub && <div className="text-sm text-[#64748B]">{e.kind === 'chore' ? '👤' : e.kind === 'workout' ? '🔥' : '📍'} {e.sub}</div>}
+                    {e.sub && <div className="text-sm text-[#64748B]">{e.kind === 'chore' ? '👤' : e.kind === 'workout' ? '🔥' : e.kind === 'meal' ? '🍴' : '📍'} {e.sub}</div>}
                   </div>
                   <span className="text-xs text-[#64748B]">{e.allDay ? 'All day' : timeLabel(e.start_time)}</span>
                 </div>
