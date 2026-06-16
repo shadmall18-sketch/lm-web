@@ -99,16 +99,19 @@ export default function FitnessPage() {
     if (recurrence === 'none') return [startDate]
     const dates: string[] = []
     const start = new Date(startDate + 'T00:00:00')
-    const end = recurEnd ? new Date(recurEnd + 'T00:00:00') : new Date(start.getTime() + 60 * 24 * 60 * 60 * 1000) // default 60 days
+    const end = recurEnd ? new Date(recurEnd + 'T00:00:00') : new Date(start.getTime() + 90 * 24 * 60 * 60 * 1000) // default 90 days
     let cursor = new Date(start)
     let iter = 0
-    while (cursor <= end && iter < 400) {
+    while (cursor <= end && iter < 500) {
       iter++
       const dow = cursor.getDay()
       const dateStr = fmt(cursor)
+      // whole days since the start date
+      const daysSinceStart = Math.round((cursor.getTime() - start.getTime()) / (24*60*60*1000))
       if (recurrence === 'daily') dates.push(dateStr)
-      else if (recurrence === 'every_other_day') { dates.push(dateStr); cursor.setDate(cursor.getDate() + 1) }
+      else if (recurrence === 'every_other_day') { if (daysSinceStart % 2 === 0) dates.push(dateStr) }
       else if (recurrence === 'weekly') { if (dow === start.getDay()) dates.push(dateStr) }
+      else if (recurrence === 'every_other_week') { if (dow === start.getDay() && (Math.floor(daysSinceStart / 7) % 2 === 0)) dates.push(dateStr) }
       else if (recurrence === 'custom_days') { if (recurDays.includes(dow)) dates.push(dateStr) }
       cursor.setDate(cursor.getDate() + 1)
     }
@@ -330,6 +333,10 @@ export default function FitnessPage() {
           {(mode==='schedule' || mode==='block') && (
             <div className="space-y-3 border border-[#334155] rounded-lg p-3">
               <div className="flex items-center gap-2">
+                <span className="text-xs text-[#94A3B8] w-16">Start date</span>
+                <input type="date" value={date} onChange={e => setDate(e.target.value)} className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
+              </div>
+              <div className="flex items-center gap-2">
                 <span className="text-xs text-[#94A3B8] w-16">Time</span>
                 <input type="time" value={schedTime} onChange={e => setSchedTime(e.target.value)} className="bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm focus:outline-none focus:border-[#6366F1]" />
               </div>
@@ -340,6 +347,7 @@ export default function FitnessPage() {
                   <option value="daily">Daily</option>
                   <option value="every_other_day">Every other day</option>
                   <option value="weekly">Weekly (same weekday)</option>
+                  <option value="every_other_week">Every other week</option>
                   <option value="custom_days">Specific days of week</option>
                 </select>
               </div>
