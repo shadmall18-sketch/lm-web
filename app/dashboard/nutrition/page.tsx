@@ -230,25 +230,16 @@ export default function NutritionPage() {
         ))}
       </div>
 
-      {section==='today' && (<>
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#10B981]">
-            <div className="text-xs text-[#64748B] uppercase font-semibold">Consumed</div>
-            <div className="text-2xl font-black text-[#10B981] mt-1">{consumed}</div>
-          </div>
-          <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#F59E0B]">
-            <div className="text-xs text-[#64748B] uppercase font-semibold">Burned</div>
-            <div className="text-2xl font-black text-[#F59E0B] mt-1">{burned}</div>
-          </div>
-          <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4" style={{ borderColor: net > 0 ? '#6366F1' : '#10B981' }}>
-            <div className="text-xs text-[#64748B] uppercase font-semibold">Net</div>
-            <div className="text-2xl font-black mt-1" style={{ color: net > 0 ? '#6366F1' : '#10B981' }}>{net > 0 ? '+' : ''}{net}</div>
-          </div>
-        </div>
-
-        <button onClick={() => setShowAdd(!showAdd)} className="bg-[#6366F1] hover:bg-[#4F46E5] text-white text-sm font-bold px-4 py-2.5 rounded-xl mb-6">+ Plan a Meal</button>
-
-        {showAdd && (
+      {section!=='stats' && (
+        <div className="mb-6">
+          <button onClick={() => setShowAdd(!showAdd)} className="bg-[#6366F1] hover:bg-[#4F46E5] text-white text-sm font-bold px-4 py-2.5 rounded-xl">+ Plan a Meal</button>
+          {showAdd && section==='calendar' && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="text-xs text-[#94A3B8]">Planning for</span>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="bg-[#1E293B] border border-[#334155] rounded-lg px-3 py-1.5 text-[#F1F5F9] text-sm" />
+            </div>
+          )}
+                  {showAdd && (
           <div className="bg-[#1E293B] border border-[#334155] rounded-xl p-4 mb-6 space-y-4">
             <div className="flex gap-2 flex-wrap">
               {MEAL_TYPES.map(t => (
@@ -345,6 +336,24 @@ export default function NutritionPage() {
             )}
           </div>
         )}
+        </div>
+      )}
+
+      {section==='today' && (<>
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#10B981]">
+            <div className="text-xs text-[#64748B] uppercase font-semibold">Consumed</div>
+            <div className="text-2xl font-black text-[#10B981] mt-1">{consumed}</div>
+          </div>
+          <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4 border-[#F59E0B]">
+            <div className="text-xs text-[#64748B] uppercase font-semibold">Burned</div>
+            <div className="text-2xl font-black text-[#F59E0B] mt-1">{burned}</div>
+          </div>
+          <div className="bg-[#1E293B] rounded-2xl p-4 border-l-4" style={{ borderColor: net > 0 ? '#6366F1' : '#10B981' }}>
+            <div className="text-xs text-[#64748B] uppercase font-semibold">Net</div>
+            <div className="text-2xl font-black mt-1" style={{ color: net > 0 ? '#6366F1' : '#10B981' }}>{net > 0 ? '+' : ''}{net}</div>
+          </div>
+        </div>
 
         {MEAL_TYPES.map(type => {
           const typeMeals = meals.filter(m => m.meal_type === type).sort((a,b)=>(a.meal_time||'').localeCompare(b.meal_time||''))
