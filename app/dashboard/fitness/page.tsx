@@ -36,9 +36,12 @@ export default function FitnessPage() {
   const [workoutPoints, setWorkoutPoints] = useState('0')
   const [reminderMins, setReminderMins] = useState('')
   const [members, setMembers] = useState<any[]>([])
+  const [familyMembers, setFamilyMembers] = useState<any[]>([])
+  const [selectedExercise, setSelectedExercise] = useState<any>(null)
+  const [assignTo, setAssignTo] = useState<'me'|'family'>('me')
+  const [visibility, setVisibility] = useState<'private'|'family'>('private')
 
   // visibility prompt
-  const [pendingExercise, setPendingExercise] = useState<any>(null)
   // fill-in-later modal for a time block
   const [fillBlock, setFillBlock] = useState<any>(null)
 
@@ -58,16 +61,22 @@ export default function FitnessPage() {
 
     const [{ data: e }, { data: p }, { data: m }, { data: fav }, { data: mem }] = await Promise.all([
       supabase.from('exercise_library').select('*').order('category').order('name'),
-      supabase.from('planned_workouts').select('*').eq('user_id', userId).eq('scheduled_date', date).order('scheduled_time'),
+      supabase.from('planned_workouts').select('*').eq('scheduled_date', date).order('scheduled_time'),
       supabase.from('planned_meals').select('*').eq('user_id', userId).eq('planned_date', date),
       supabase.from('favorites').select('item_id').eq('user_id', userId).eq('item_type', 'exercise'),
-      supabase.from('users').select('id, is_child, role').eq('id', userId).single(),
+      supabase.from('users').select('id, display_name, is_child, role, family_id').eq('id', userId).single(),
     ])
     setExercises(e ?? [])
-    setPlanned(p ?? [])
+    // Show my workouts + any family-visible workouts from others
+    setPlanned((p ?? []).filter((w:any) => w.user_id === userId || w.visibility === 'family'))
     setMeals(m ?? [])
     setFavorites((fav ?? []).map((x: any) => x.item_id))
     setMembers(mem ? [mem] : [])
+    // Load all family members for assignment dropdown
+    if (mem?.family_id) {
+      const { data: fam } = await supabase.from('users').select('id, display_name, is_child').eq('family_id', mem.family_id).order('is_child').order('display_name')
+      setFamilyMembers(fam ?? [])
+    }
   }
 
   useEffect(() => { load() }, [date])
@@ -117,19 +126,20 @@ export default function FitnessPage() {
     resetPanel(); load()
   }
 
-  // ---- SCHEDULE: pick exercise then visibility, supports recurrence ----
+  // ---- SCHEDULE: pick exercise (stages it; doesn't save until Add tapped) ----
   const pickExercise = (ex: any) => {
     if (mode === 'log') { quickLog(ex.name, ex.calories_est, ex.id); return }
-    setPendingExercise({ name: ex.name, calories: ex.calories_est, exercise_id: ex.id })
+    setSelectedExercise({ name: ex.name, calories: ex.calories_est, exercise_id: ex.id })
   }
   const pickCustom = () => {
     if (!customName || !customCals) return
     if (mode === 'log') { quickLog(customName, parseInt(customCals), null); return }
-    setPendingExercise({ name: customName, calories: parseInt(customCals), exercise_id: null })
+    setSelectedExercise({ name: customName, calories: parseInt(customCals), exercise_id: null })
   }
 
-  const confirmAdd = async (visibility: 'private'|'family') => {
-    const ex = pendingExercise
+  const saveScheduled = async () => {
+    const ex = selectedExercise
+    if (!ex) { alert('Pick an exercise first.'); return }
     if (recurrence === 'custom_days' && recurDays.length === 0) {
       alert('Pick at least one day of the week first.')
       return
@@ -140,19 +150,26 @@ export default function FitnessPage() {
       return
     }
     const sid = dates.length > 1 ? uuid() : null
-    const rows = dates.map(d => ({
-      family_id: familyId, user_id: uid,
-      exercise_id: ex.exercise_id ?? null,
-      custom_name: ex.name, calories: ex.calories,
-      scheduled_date: d, scheduled_time: schedTime || null,
-      visibility, show_on_calendar: true,
-      points_value: parseInt(workoutPoints) || 0,
-      reminder_minutes: reminderMins ? parseInt(reminderMins) : null,
-      recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
-      recurrence_end: recurEnd || null, series_id: sid,
-    }))
+    const assignees = assignTo === 'family' ? familyMembers.map(m => m.id) : [uid]
+    const vis = assignTo === 'family' ? 'family' : visibility
+    const rows: any[] = []
+    for (const userId of assignees) {
+      for (const d of dates) {
+        rows.push({
+          family_id: familyId, user_id: userId,
+          exercise_id: ex.exercise_id ?? null,
+          custom_name: ex.name, calories: ex.calories,
+          scheduled_date: d, scheduled_time: schedTime || null,
+          visibility: vis, show_on_calendar: true,
+          points_value: parseInt(workoutPoints) || 0,
+          reminder_minutes: reminderMins ? parseInt(reminderMins) : null,
+          recurrence, recurrence_days: recurrence === 'custom_days' ? recurDays : null,
+          recurrence_end: recurEnd || null, series_id: sid,
+        })
+      }
+    }
     await supabase.from('planned_workouts').insert(rows)
-    setPendingExercise(null); resetPanel(); load()
+    setSelectedExercise(null); resetPanel(); load()
   }
 
   // ---- TIME BLOCK: reserve a time, fill exercise in later ----
@@ -185,6 +202,7 @@ export default function FitnessPage() {
   const resetPanel = () => {
     setShowAdd(false); setSearch(''); setCustomName(''); setCustomCals('')
     setRecurrence('none'); setRecurDays([]); setRecurEnd(''); setBlockLabel('Workout'); setWorkoutPoints('0'); setReminderMins('')
+    setSelectedExercise(null); setAssignTo('me'); setVisibility('private')
   }
 
   const awardWorkoutPoints = async (w: any, missed: boolean) => {
@@ -354,6 +372,26 @@ export default function FitnessPage() {
                   <option value="60">1 hour before</option>
                 </select>
               </div>
+              {mode==='schedule' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#94A3B8] w-16">For</span>
+                    <div className="flex gap-2 flex-1">
+                      <button onClick={() => setAssignTo('me')} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${assignTo==='me'?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#64748B]'}`}>Just me</button>
+                      <button onClick={() => setAssignTo('family')} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${assignTo==='family'?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#64748B]'}`}>👨‍👩‍👧 Whole family</button>
+                    </div>
+                  </div>
+                  {assignTo==='me' && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#94A3B8] w-16">Visible to</span>
+                      <div className="flex gap-2 flex-1">
+                        <button onClick={() => setVisibility('private')} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${visibility==='private'?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#64748B]'}`}>🔒 Only me</button>
+                        <button onClick={() => setVisibility('family')} className={`flex-1 py-1.5 rounded-lg text-xs font-semibold ${visibility==='family'?'bg-[#6366F1] text-white':'bg-[#0F172A] text-[#64748B]'}`}>👀 Family can see</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -371,15 +409,17 @@ export default function FitnessPage() {
                 <button onClick={() => setShowFavsOnly(!showFavsOnly)} className={`px-3 rounded-lg text-sm font-semibold ${showFavsOnly?'bg-[#F59E0B] text-white':'bg-[#0F172A] text-[#94A3B8]'}`}>★</button>
               </div>
               <div className="max-h-56 overflow-y-auto space-y-1 border border-[#334155] rounded-lg p-2">
-                {displayEx.map(ex => (
+                {displayEx.map(ex => {
+                  const isSel = mode==='schedule' && selectedExercise && selectedExercise.exercise_id === ex.id
+                  return (
                   <div key={ex.id} className="flex items-center gap-2">
                     <button onClick={(e) => toggleFav(ex.id, e)} className="text-lg px-1">{favorites.includes(ex.id)?'⭐':'☆'}</button>
-                    <button onClick={() => pickExercise(ex)} className="flex-1 flex justify-between items-center bg-[#0F172A] hover:bg-[#0A0F1E] rounded-lg px-3 py-2 text-left">
-                      <div><div className="text-sm text-[#F1F5F9]">{ex.name}</div><div className="text-xs text-[#475569]">{ex.category}</div></div>
+                    <button onClick={() => pickExercise(ex)} className={`flex-1 flex justify-between items-center rounded-lg px-3 py-2 text-left border ${isSel ? 'bg-[#312E81] border-[#6366F1]' : 'bg-[#0F172A] border-transparent hover:bg-[#0A0F1E]'}`}>
+                      <div><div className="text-sm text-[#F1F5F9]">{ex.name} {isSel && '✓'}</div><div className="text-xs text-[#475569]">{ex.category}</div></div>
                       <span className="text-sm font-bold text-[#F59E0B]">{ex.calories_est} cal</span>
                     </button>
                   </div>
-                ))}
+                )})}
                 {displayEx.length === 0 && <div className="text-center text-[#475569] text-sm py-4 italic">No exercises match</div>}
               </div>
               <div className="border-t border-[#334155] pt-3">
@@ -387,26 +427,28 @@ export default function FitnessPage() {
                 <div className="flex gap-2">
                   <input value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Workout name" className="flex-1 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
                   <input value={customCals} onChange={e => setCustomCals(e.target.value)} placeholder="Cals" type="number" className="w-20 bg-[#0F172A] border border-[#334155] rounded-lg px-3 py-2 text-[#F1F5F9] placeholder-[#475569] text-sm focus:outline-none focus:border-[#6366F1]" />
-                  <button onClick={pickCustom} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">{mode==='log'?'Log':'Add'}</button>
+                  <button onClick={pickCustom} className="bg-[#6366F1] text-white text-sm font-bold px-4 rounded-lg">{mode==='log'?'Log':'Select'}</button>
                 </div>
               </div>
+
+              {/* Schedule mode: show selection + explicit Add button */}
+              {mode==='schedule' && (
+                <div className="border-t border-[#334155] pt-3">
+                  {selectedExercise ? (
+                    <div className="flex items-center justify-between bg-[#312E81] rounded-lg px-3 py-2 mb-3">
+                      <span className="text-sm text-[#F1F5F9]">Selected: <span className="font-bold">{selectedExercise.name}</span> · {selectedExercise.calories} cal</span>
+                      <button onClick={() => setSelectedExercise(null)} className="text-[#A5B4FC] text-xs">change</button>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-[#475569] italic mb-3">Pick an exercise above, then tap Add to Calendar.</div>
+                  )}
+                  <button onClick={saveScheduled} disabled={!selectedExercise} className="w-full bg-[#6366F1] hover:bg-[#4F46E5] text-white text-sm font-bold py-2.5 rounded-lg disabled:opacity-40">
+                    📅 Add to Calendar
+                  </button>
+                </div>
+              )}
             </>
           )}
-        </div>
-      )}
-
-      {/* Visibility prompt */}
-      {pendingExercise && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setPendingExercise(null)}>
-          <div className="bg-[#1E293B] border border-[#334155] rounded-2xl p-6 max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-[#F1F5F9] mb-1">Add "{pendingExercise.name}"</h3>
-            <p className="text-sm text-[#64748B] mb-5">Who can see this on the calendar?{recurrence!=='none' && ' (applies to all repeats)'}</p>
-            <div className="space-y-2">
-              <button onClick={() => confirmAdd('private')} className="w-full bg-[#0F172A] hover:bg-[#0A0F1E] border border-[#334155] rounded-xl p-3 text-left"><div className="font-semibold text-[#F1F5F9] text-sm">🔒 Only me</div></button>
-              <button onClick={() => confirmAdd('family')} className="w-full bg-[#0F172A] hover:bg-[#0A0F1E] border border-[#334155] rounded-xl p-3 text-left"><div className="font-semibold text-[#F1F5F9] text-sm">👨‍👩‍👧 Whole family</div></button>
-            </div>
-            <button onClick={() => setPendingExercise(null)} className="w-full mt-3 text-[#64748B] text-sm py-2">Cancel</button>
-          </div>
         </div>
       )}
 
